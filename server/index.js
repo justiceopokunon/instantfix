@@ -1,28 +1,86 @@
-const express = require('express');
-const http = require('http');
-const { Server } = require('socket.io');
+const express = require("express");
+const http = require("http");
+const cors = require("cors");
+const { Server } = require("socket.io");
 
 const app = express();
+app.use(cors());
+app.use(express.json());
+
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: '*' } });
+const io = new Server(server, {
+  cors: { origin: "*" }
+});
 
-const canvasState = {};
+// In-memory job database
+const jobs = [];
 
-io.on('connection', (socket) => {
-  console.log('user connected:', socket.id);
+/*
+Job structure:
+{
+  id,
+  title,
+  description,
+  location,
+  status: "open" | "accepted" | "done",
+  helperId
+}
+*/
 
-  socket.emit('canvas-state', canvasState);
+app.get("/", (req, res) => {
+  res.send("InstantFix backend running");
+});
 
-  socket.on('place-pixel', ({ x, y, color }) => {
-    canvasState[`${x},${y}`] = color;
-    io.emit('pixel-placed', { x, y, color });
+app.get("/jobs", (req, res) => {
+  res.json(jobs);
+});
+
+io.on("connection", (socket) => {
+  console.log("user connected:", socket.id);
+
+  // send current jobs on connect
+  socket.emit("jobs:init", jobs);
+
+  // CREATE JOB
+  socket.on("job:create", (data) => {
+    const job = {
+      id: Date.now().toString(),
+      title: data.title,
+      description: data.description,
+      location: data.location,
+      status: "open",
+      helperId: null
+    };
+
+    jobs.push(job);
+    io.emit("job:new", job);
   });
 
-  socket.on('disconnect', () => {
-    console.log('user disconnected:', socket.id);
+  // ACCEPT JOB
+  socket.on("job:accept", ({ jobId }) => {
+    const job = jobs.find(j => j.id === jobId);
+    if (!job || job.status !== "open") return;
+
+    job.status = "accepted";
+    job.helperId = socket.id;
+
+    io.emit("job:update", job);
+  });
+
+  // COMPLETE JOB
+  socket.on("job:done", ({ jobId }) => {
+    const job = jobs.find(j => j.id === jobId);
+    if (!job) return;
+
+    job.status = "done";
+    io.emit("job:update", job);
+  });
+
+  socket.on("disconnect", () => {
+    console.log("user disconnected:", socket.id);
   });
 });
 
 server.listen(3000, () => {
-  console.log('Server running on http://localhost:3000');
+  console.log("InstantFix running on http://localhost:3000");
 });

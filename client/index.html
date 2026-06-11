@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>InstantFix</title>
+  <style>
+    body {
+      font-family: Arial;
+      margin: 0;
+      background: #0f172a;
+      color: white;
+    }
+
+    header {
+      padding: 15px;
+      background: #111827;
+      font-size: 20px;
+    }
+
+    .container {
+      display: flex;
+      gap: 20px;
+      padding: 20px;
+    }
+
+    .box {
+      flex: 1;
+      background: #1f2937;
+      padding: 15px;
+      border-radius: 10px;
+    }
+
+    input, textarea {
+      width: 100%;
+      margin-bottom: 10px;
+      padding: 8px;
+    }
+
+    button {
+      padding: 8px 12px;
+      cursor: pointer;
+    }
+
+    .job {
+      background: #111827;
+      padding: 10px;
+      margin-bottom: 10px;
+      border-radius: 8px;
+    }
+
+    .open { border-left: 4px solid green; }
+    .accepted { border-left: 4px solid orange; }
+    .done { border-left: 4px solid gray; }
+  </style>
+</head>
+
+<body>
+  <header>InstantFix</header>
+
+  <div class="container">
+
+    <div class="box">
+      <h3>Create Job</h3>
+
+      <input id="title" placeholder="Title" />
+      <textarea id="desc" placeholder="Description"></textarea>
+      <input id="location" placeholder="Location" />
+
+      <button onclick="createJob()">Post Job</button>
+    </div>
+
+    <div class="box">
+      <h3>Live Jobs</h3>
+      <div id="jobs"></div>
+    </div>
+
+  </div>
+
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+
+  <script>
+    const socket = io("http://localhost:3000");
+    const jobsDiv = document.getElementById("jobs");
+
+    let jobs = [];
+
+    function renderJobs() {
+      jobsDiv.innerHTML = "";
+
+      jobs.forEach(job => {
+        const div = document.createElement("div");
+        div.className = "job " + job.status;
+
+        div.innerHTML = `
+          <b>${job.title}</b><br/>
+          ${job.description}<br/>
+          <small>${job.location}</small><br/>
+          <b>Status:</b> ${job.status}<br/>
+        `;
+
+        if (job.status === "open") {
+          const btn = document.createElement("button");
+          btn.innerText = "Accept Job";
+          btn.onclick = () => {
+            socket.emit("job:accept", { jobId: job.id });
+          };
+          div.appendChild(btn);
+        }
+
+        jobsDiv.appendChild(div);
+      });
+    }
+
+    function createJob() {
+      const title = document.getElementById("title").value;
+      const desc = document.getElementById("desc").value;
+      const location = document.getElementById("location").value;
+
+      socket.emit("job:create", {
+        title,
+        description: desc,
+        location
+      });
+    }
+
+    socket.on("jobs:init", (data) => {
+      jobs = data;
+      renderJobs();
+    });
+
+    socket.on("job:new", (job) => {
+      jobs.push(job);
+      renderJobs();
+    });
+
+    socket.on("job:update", (updated) => {
+      jobs = jobs.map(j => j.id === updated.id ? updated : j);
+      renderJobs();
+    });
+  </script>
+
+</body>
+</html>
