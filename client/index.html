@@ -97,14 +97,23 @@
           <b>Status:</b> ${job.status}<br/>
         `;
 
-        if (job.status === "open") {
-          const btn = document.createElement("button");
-          btn.innerText = "Accept Job";
-          btn.onclick = () => {
-            socket.emit("job:accept", { jobId: job.id });
-          };
-          div.appendChild(btn);
-        }
+       if (job.status === "open") {
+  const btn = document.createElement("button");
+  btn.innerText = "Accept Job";
+  btn.onclick = () => {
+    socket.emit("job:accept", { jobId: job.id });
+  };
+  div.appendChild(btn);
+}
+
+if (job.status === "accepted") {
+  const btn = document.createElement("button");
+  btn.innerText = "Mark as Done";
+  btn.onclick = () => {
+    socket.emit("job:done", { jobId: job.id });
+  };
+  div.appendChild(btn);
+}
 
         jobsDiv.appendChild(div);
       });
