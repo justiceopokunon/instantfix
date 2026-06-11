@@ -12,18 +12,18 @@ const io = new Server(server, {
   cors: { origin: "*" }
 });
 
-// In-memory job database
+// Jobs database
 const jobs = [];
 
+// Users store
+const users = {};
+
 /*
-Job structure:
+User structure:
 {
   id,
-  title,
-  description,
-  location,
-  status: "open" | "accepted" | "done",
-  helperId
+  username,
+  role: "client" | "helper"
 }
 */
 
@@ -35,10 +35,25 @@ app.get("/jobs", (req, res) => {
   res.json(jobs);
 });
 
-io.on("connection", (socket) => {
-  console.log("user connected:", socket.id);
+app.get("/users", (req, res) => {
+  res.json(users);
+});
 
-  // send current jobs on connect
+io.on("connection", (socket) => {
+  console.log("connected:", socket.id);
+
+  // REGISTER USER
+  socket.on("user:join", (data) => {
+    users[socket.id] = {
+      id: socket.id,
+      username: data.username,
+      role: data.role
+    };
+
+    socket.emit("user:ready", users[socket.id]);
+  });
+
+  // SEND JOBS ON CONNECT
   socket.emit("jobs:init", jobs);
 
   // CREATE JOB
@@ -49,6 +64,7 @@ io.on("connection", (socket) => {
       description: data.description,
       location: data.location,
       status: "open",
+      ownerId: socket.id,
       helperId: null
     };
 
@@ -77,11 +93,12 @@ io.on("connection", (socket) => {
   });
 
   socket.on("disconnect", () => {
-    console.log("user disconnected:", socket.id);
+    delete users[socket.id];
+    console.log("disconnected:", socket.id);
   });
 });
 
-sconst PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3000;
 
 server.listen(PORT, () => {
   console.log("InstantFix running on port", PORT);

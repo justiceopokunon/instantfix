@@ -1,151 +1,173 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+  <meta charset="UTF-8" />
   <title>InstantFix</title>
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+
   <style>
     body {
       font-family: Arial;
-      margin: 0;
       background: #0f172a;
       color: white;
+      margin: 0;
     }
 
-    header {
-      padding: 15px;
-      background: #111827;
-      font-size: 20px;
-    }
-
-    .container {
+    .login {
       display: flex;
-      gap: 20px;
-      padding: 20px;
+      flex-direction: column;
+      gap: 10px;
+      width: 300px;
+      margin: 100px auto;
     }
 
-    .box {
-      flex: 1;
-      background: #1f2937;
-      padding: 15px;
-      border-radius: 10px;
-    }
-
-    input, textarea {
-      width: 100%;
-      margin-bottom: 10px;
-      padding: 8px;
+    input, select, button {
+      padding: 10px;
+      border-radius: 6px;
+      border: none;
     }
 
     button {
-      padding: 8px 12px;
+      background: #3b82f6;
+      color: white;
       cursor: pointer;
+    }
+
+    header {
+      padding: 10px;
+      background: #111827;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .container {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      padding: 16px;
+    }
+
+    .card {
+      background: #1f2937;
+      padding: 10px;
+      border-radius: 8px;
     }
 
     .job {
       background: #111827;
       padding: 10px;
-      margin-bottom: 10px;
-      border-radius: 8px;
+      margin-bottom: 8px;
+      border-radius: 6px;
     }
-
-    .open { border-left: 4px solid green; }
-    .accepted { border-left: 4px solid orange; }
-    .done { border-left: 4px solid gray; }
   </style>
 </head>
 
 <body>
-  <header>InstantFix</header>
+
+<div id="loginPage" class="login">
+  <h2>InstantFix Login</h2>
+  <input id="username" placeholder="Username" />
+  <select id="role">
+    <option value="client">Client</option>
+    <option value="helper">Helper</option>
+  </select>
+  <button onclick="join()">Enter</button>
+</div>
+
+<div id="app" style="display:none;">
+  <header>
+    <div>InstantFix</div>
+    <div id="me"></div>
+  </header>
 
   <div class="container">
 
-    <div class="box">
+    <div class="card">
       <h3>Create Job</h3>
-
       <input id="title" placeholder="Title" />
-      <textarea id="desc" placeholder="Description"></textarea>
+      <input id="description" placeholder="Description" />
       <input id="location" placeholder="Location" />
-
-      <button onclick="createJob()">Post Job</button>
+      <button onclick="createJob()">Post</button>
     </div>
 
-    <div class="box">
-      <h3>Live Jobs</h3>
+    <div class="card">
+      <h3>Jobs</h3>
       <div id="jobs"></div>
     </div>
 
   </div>
+</div>
 
-  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script>
+  const socket = io("http://localhost:3000");
 
-  <script>
-    const socket = io();
-    const jobsDiv = document.getElementById("jobs");
+  let currentUser = null;
+  const jobsDiv = document.getElementById("jobs");
 
-    let jobs = [];
+  function join() {
+    const username = document.getElementById("username").value;
+    const role = document.getElementById("role").value;
 
-    function renderJobs() {
-      jobsDiv.innerHTML = "";
+    socket.emit("user:join", { username, role });
 
-      jobs.forEach(job => {
-        const div = document.createElement("div");
-        div.className = "job " + job.status;
+    document.getElementById("loginPage").style.display = "none";
+    document.getElementById("app").style.display = "block";
+  }
 
-        div.innerHTML = `
-          <b>${job.title}</b><br/>
-          ${job.description}<br/>
-          <small>${job.location}</small><br/>
-          <b>Status:</b> ${job.status}<br/>
-        `;
+  socket.on("user:ready", (user) => {
+    currentUser = user;
+    document.getElementById("me").innerText =
+      user.username + " (" + user.role + ")";
+  });
 
-       if (job.status === "open") {
-  const btn = document.createElement("button");
-  btn.innerText = "Accept Job";
-  btn.onclick = () => {
-    socket.emit("job:accept", { jobId: job.id });
-  };
-  div.appendChild(btn);
-}
+  socket.on("jobs:init", renderJobs);
+  socket.on("job:new", addJob);
+  socket.on("job:update", updateJob);
 
-if (job.status === "accepted") {
-  const btn = document.createElement("button");
-  btn.innerText = "Mark as Done";
-  btn.onclick = () => {
-    socket.emit("job:done", { jobId: job.id });
-  };
-  div.appendChild(btn);
-}
-
-        jobsDiv.appendChild(div);
-      });
-    }
-
-    function createJob() {
-      const title = document.getElementById("title").value;
-      const desc = document.getElementById("desc").value;
-      const location = document.getElementById("location").value;
-
-      socket.emit("job:create", {
-        title,
-        description: desc,
-        location
-      });
-    }
-
-    socket.on("jobs:init", (data) => {
-      jobs = data;
-      renderJobs();
+  function createJob() {
+    socket.emit("job:create", {
+      title: title.value,
+      description: description.value,
+      location: location.value
     });
+  }
 
-    socket.on("job:new", (job) => {
-      jobs.push(job);
-      renderJobs();
-    });
+  function renderJobs(jobs) {
+    jobsDiv.innerHTML = "";
+    jobs.forEach(addJob);
+  }
 
-    socket.on("job:update", (updated) => {
-      jobs = jobs.map(j => j.id === updated.id ? updated : j);
-      renderJobs();
-    });
-  </script>
+  function addJob(job) {
+    const div = document.createElement("div");
+    div.className = "job";
+    div.id = job.id;
+
+    div.innerHTML = `
+      <b>${job.title}</b>
+      <p>${job.description}</p>
+      <small>${job.location}</small>
+      <p>Status: ${job.status}</p>
+      <button onclick="acceptJob('${job.id}')">Accept</button>
+      <button onclick="doneJob('${job.id}')">Done</button>
+    `;
+
+    jobsDiv.appendChild(div);
+  }
+
+  function updateJob(job) {
+    const old = document.getElementById(job.id);
+    if (old) old.remove();
+    addJob(job);
+  }
+
+  function acceptJob(id) {
+    socket.emit("job:accept", { jobId: id });
+  }
+
+  function doneJob(id) {
+    socket.emit("job:done", { jobId: id });
+  }
+</script>
 
 </body>
 </html>
