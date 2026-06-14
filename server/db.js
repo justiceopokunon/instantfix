@@ -23,9 +23,21 @@ db.serialize(() => {
       location TEXT,
       status TEXT,
       clientId TEXT,
-      helperId TEXT
+      workerId TEXT
     )
   `);
+
+  db.all("PRAGMA table_info(jobs)", [], (err, columns) => {
+    if (err) return;
+
+    const columnNames = columns.map((column) => column.name);
+
+    if (columnNames.includes("helperId") && !columnNames.includes("workerId")) {
+      db.run("ALTER TABLE jobs ADD COLUMN workerId TEXT", () => {
+        db.run("UPDATE jobs SET workerId = helperId WHERE workerId IS NULL AND helperId IS NOT NULL");
+      });
+    }
+  });
 });
 
 module.exports = db;

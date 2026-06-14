@@ -40,7 +40,7 @@ router.post("/register", (req, res) => {
 LOGIN
 */
 router.post("/login", (req, res) => {
-  const { email, password } = req.body;
+  const { email, password, role } = req.body;
 
   const query = `SELECT * FROM users WHERE email = ?`;
 
@@ -55,6 +55,12 @@ router.post("/login", (req, res) => {
       return res.json({ message: "Invalid credentials" });
     }
 
+    if (role && user.role !== role) {
+      return res.json({
+        message: `This account is registered as ${user.role}`
+      });
+    }
+
     const token = jwt.sign(
       {
         id: user.id,
@@ -65,7 +71,7 @@ router.post("/login", (req, res) => {
       { expiresIn: "7d" }
     );
 
-    res.json({ token });
+    res.json({ token, role: user.role });
   });
 });
 
