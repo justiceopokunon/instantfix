@@ -5,9 +5,11 @@ const db = require("./db");
 
 const router = express.Router();
 
-const JWT_SECRET = process.env.JWT_SECRET || "dev_secret_change_me";
+const JWT_SECRET = "instantfix_secret_key_change_this";
 
-/* ---------------- REGISTER ---------------- */
+/*
+REGISTER
+*/
 router.post("/register", (req, res) => {
   const { email, password, role } = req.body;
 
@@ -15,57 +17,56 @@ router.post("/register", (req, res) => {
     return res.json({ message: "Missing fields" });
   }
 
-  const id = Date.now().toString();
+  const hash = bcrypt.hashSync(password, 10);
 
-  const hashedPassword = bcrypt.hashSync(password, 10);
+  const query = `
+    INSERT INTO users (email, password, role)
+    VALUES (?, ?, ?)
+  `;
 
-  db.run(
-    `INSERT INTO users (id, email, password, role) VALUES (?, ?, ?, ?)`,
-    [id, email, hashedPassword, role],
-    (err) => {
-      if (err) {
-        return res.json({ message: "User already exists" });
-      }
-
-      res.json({ message: "User registered successfully" });
+  db.run(query, [email, hash, role], function (err) {
+    if (err) {
+      return res.json({ message: "User already exists" });
     }
-  );
+
+    return res.json({
+      message: "User created",
+      userId: this.lastID
+    });
+  });
 });
 
-/* ---------------- LOGIN ---------------- */
+/*
+LOGIN
+*/
 router.post("/login", (req, res) => {
   const { email, password } = req.body;
 
-  db.get(
-    `SELECT * FROM users WHERE email = ?`,
-    [email],
-    (err, user) => {
-      if (err || !user) {
-        return res.json({ message: "Invalid credentials" });
-      }
+  const query = `SELECT * FROM users WHERE email = ?`;
 
-      const isValid = bcrypt.compareSync(password, user.password);
-
-      if (!isValid) {
-        return res.json({ message: "Invalid credentials" });
-      }
-
-      const token = jwt.sign(
-        {
-          id: user.id,
-          email: user.email,
-          role: user.role
-        },
-        JWT_SECRET,
-        { expiresIn: "7d" }
-      );
-
-      res.json({
-        token,
-        role: user.role
-      });
+  db.get(query, [email], (err, user) => {
+    if (err || !user) {
+      return res.json({ message: "Invalid credentials" });
     }
-  );
+
+    const valid = bcrypt.compareSync(password, user.password);
+
+    if (!valid) {
+      return res.json({ message: "Invalid credentials" });
+    }
+
+    const token = jwt.sign(
+      {
+        id: user.id,
+        email: user.email,
+        role: user.role
+      },
+      JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
+    res.json({ token });
+  });
 });
 
-module.exports = { router };
+module.exports = { router, JWT_SECRET };
