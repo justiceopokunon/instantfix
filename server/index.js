@@ -17,14 +17,13 @@ const io = new Server(server, {
   cors: { origin: "*" }
 });
 
-// AUTH ROUTES
 app.use("/auth", authRouter);
 
 app.get("/", (req, res) => {
   res.send("InstantFix backend running");
 });
 
-// SOCKET AUTH
+// AUTH MIDDLEWARE
 io.use((socket, next) => {
   try {
     const token = socket.handshake.auth?.token;
@@ -39,15 +38,20 @@ io.use((socket, next) => {
   }
 });
 
+// ADMIN CHECK
+function requireAdmin(socket) {
+  return socket.user?.role === "admin";
+}
+
 io.on("connection", (socket) => {
   console.log("connected:", socket.user.email, "| role:", socket.user.role);
 
-  // SEND ALL JOBS FROM DB
+  // SEND JOBS
   db.all("SELECT * FROM jobs", [], (err, rows) => {
     socket.emit("jobs:init", rows || []);
   });
 
-  // CREATE JOB (CLIENT ONLY)
+  // CREATE JOB (CLIENT)
   socket.on("job:create", (data) => {
     if (socket.user.role !== "client") return;
 
@@ -73,45 +77,78 @@ io.on("connection", (socket) => {
         job.clientId,
         job.helperId
       ],
-      (err) => {
-        if (err) return;
-        io.emit("job:new", job);
-      }
+      () => io.emit("job:new", job)
     );
   });
 
-  // ACCEPT JOB (HELPER ONLY)
+  // ACCEPT JOB (HELPER)
   socket.on("job:accept", ({ jobId }) => {
     if (socket.user.role !== "helper") return;
 
     db.run(
       `UPDATE jobs SET status = ?, helperId = ? WHERE id = ? AND status = 'open'`,
       ["accepted", socket.user.id, jobId],
-      function (err) {
-        if (err) return;
-
-        db.get(`SELECT * FROM jobs WHERE id = ?`, [jobId], (err, job) => {
-          if (!job) return;
-          io.emit("job:update", job);
+      () => {
+        db.get("SELECT * FROM jobs WHERE id = ?", [jobId], (err, job) => {
+          if (job) io.emit("job:update", job);
         });
       }
     );
   });
 
-  // COMPLETE JOB (HELPER ONLY)
+  // COMPLETE JOB (HELPER)
   socket.on("job:done", ({ jobId }) => {
     if (socket.user.role !== "helper") return;
 
     db.run(
       `UPDATE jobs SET status = ? WHERE id = ?`,
       ["done", jobId],
-      function (err) {
-        if (err) return;
-
-        db.get(`SELECT * FROM jobs WHERE id = ?`, [jobId], (err, job) => {
-          if (!job) return;
-          io.emit("job:update", job);
+      () => {
+        db.get("SELECT * FROM jobs WHERE id = ?", [jobId], (err, job) => {
+          if (job) io.emit("job:update", job);
         });
+      }
+    );
+  });
+
+  // ---------------- ADMIN SYSTEM ----------------
+
+  // GET USERS
+  socket.on("admin:users", () => {
+    if (!requireAdmin(socket)) return;
+
+    db.all("SELECT id, email, role FROM users", [], (err, rows) => {
+      socket.emit("admin:users:data", rows || []);
+    });
+  });
+
+  // GET JOBS
+  socket.on("admin:jobs", () => {
+    if (!requireAdmin(socket)) return;
+
+    db.all("SELECT * FROM jobs", [], (err, rows) => {
+      socket.emit("admin:jobs:data", rows || []);
+    });
+  });
+
+  // DELETE JOB
+  socket.on("admin:deleteJob", ({ jobId }) => {
+    if (!requireAdmin(socket)) return;
+
+    db.run("DELETE FROM jobs WHERE id = ?", [jobId], () => {
+      io.emit("job:deleted", { jobId });
+    });
+  });
+
+  // CHANGE ROLE
+  socket.on("admin:setRole", ({ userId, role }) => {
+    if (!requireAdmin(socket)) return;
+
+    db.run(
+      "UPDATE users SET role = ? WHERE id = ?",
+      [role, userId],
+      () => {
+        socket.emit("admin:roleUpdated", { userId, role });
       }
     );
   });
