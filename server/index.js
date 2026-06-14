@@ -2,8 +2,7 @@ const express = require("express");
 const http = require("http");
 const cors = require("cors");
 const { Server } = require("socket.io");
-
-const { register, login, authMiddleware } = require("./auth");
+const { router: authRouter } = require("./auth");
 
 const app = express();
 app.use(cors());
@@ -11,95 +10,70 @@ app.use(express.json());
 
 const server = http.createServer(app);
 const io = new Server(server, {
-    cors: { origin: "*" }
+  cors: { origin: "*" }
 });
 
-// In-memory storage
 const jobs = [];
 const users = {};
 
-/*
-JOB STRUCTURE
-{
-  id,
-  title,
-  description,
-  location,
-  status: "open" | "accepted" | "done",
-  ownerId,
-  helperId
-}
-*/
-
 // AUTH ROUTES
-app.post("/register", register);
-app.post("/login", login);
+app.use("/auth", authRouter);
 
 app.get("/", (req, res) => {
-    res.send("InstantFix backend running");
+  res.send("InstantFix backend running");
 });
 
 app.get("/jobs", (req, res) => {
-    res.json(jobs);
+  res.json(jobs);
 });
 
 io.on("connection", (socket) => {
-    console.log("user connected:", socket.id);
+  users[socket.id] = { id: socket.id, role: "client" };
 
-    users[socket.id] = {
-        id: socket.id
+  console.log("user connected:", socket.id);
+
+  socket.emit("jobs:init", jobs);
+
+  socket.on("job:create", (data) => {
+    const job = {
+      id: Date.now().toString(),
+      title: data.title,
+      description: data.description,
+      location: data.location,
+      status: "open",
+      helperId: null
     };
 
-    socket.emit("jobs:init", jobs);
+    jobs.push(job);
+    io.emit("job:new", job);
+  });
 
-    // CREATE JOB (now requires auth data)
-    socket.on("job:create", (data) => {
+  socket.on("job:accept", ({ jobId }) => {
+    const job = jobs.find(j => j.id === jobId);
+    if (!job || job.status !== "open") return;
 
-        const job = {
-            id: Date.now().toString(),
-            title: data.title,
-            description: data.description,
-            location: data.location,
-            status: "open",
-            ownerId: data.ownerId || null,
-            helperId: null
-        };
+    job.status = "accepted";
+    job.helperId = socket.id;
 
-        jobs.push(job);
-        io.emit("job:new", job);
-    });
+    io.emit("job:update", job);
+  });
 
-    // ACCEPT JOB
-    socket.on("job:accept", ({ jobId }) => {
+  socket.on("job:done", ({ jobId }) => {
+    const job = jobs.find(j => j.id === jobId);
+    if (!job) return;
 
-        const job = jobs.find(j => j.id === jobId);
-        if (!job || job.status !== "open") return;
+    job.status = "done";
+    io.emit("job:update", job);
+  });
 
-        job.status = "accepted";
-        job.helperId = socket.id;
-
-        io.emit("job:update", job);
-    });
-
-    // COMPLETE JOB
-    socket.on("job:done", ({ jobId }) => {
-
-        const job = jobs.find(j => j.id === jobId);
-        if (!job) return;
-
-        job.status = "done";
-
-        io.emit("job:update", job);
-    });
-
-    socket.on("disconnect", () => {
-        delete users[socket.id];
-        console.log("user disconnected:", socket.id);
-    });
+  socket.on("disconnect", () => {
+    delete users[socket.id];
+    console.log("user disconnected:", socket.id);
+  });
 });
 
 const PORT = process.env.PORT || 3000;
 
 server.listen(PORT, () => {
-    console.log("InstantFix running on port", PORT);
+  console.log("InstantFix running on port", PORT);
 });

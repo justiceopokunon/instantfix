@@ -1,83 +1,93 @@
-const jwt = require("jsonwebtoken");
+const express = require("express");
 const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
+const fs = require("fs");
 
-const SECRET = "instantfix_secret_key_change_me";
+const router = express.Router();
 
-// In-memory users (we will later move to SQLite)
-const users = [];
+const USERS_FILE = "./users.json";
+const JWT_SECRET = "instantfix_secret_key_change_this";
+
+// load users
+function loadUsers() {
+  if (!fs.existsSync(USERS_FILE)) return [];
+  return JSON.parse(fs.readFileSync(USERS_FILE));
+}
+
+// save users
+function saveUsers(users) {
+  fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
+}
 
 // REGISTER
-function register(req, res) {
-    const { email, password, role } = req.body;
+router.post("/register", async (req, res) => {
+  const { email, password, role } = req.body;
 
-    const existing = users.find(u => u.email === email);
-    if (existing) {
-        return res.status(400).json({ error: "User exists" });
-    }
+  if (!email || !password) {
+    return res.status(400).json({ message: "Missing fields" });
+  }
 
-    const hashed = bcrypt.hashSync(password, 10);
+  let users = loadUsers();
 
-    const user = {
-        id: Date.now().toString(),
-        email,
-        password: hashed,
-        role: role || "client"
-    };
+  const exists = users.find(u => u.email === email);
+  if (exists) {
+    return res.status(400).json({ message: "User already exists" });
+  }
 
-    users.push(user);
+  const hashedPassword = await bcrypt.hash(password, 10);
 
-    const token = jwt.sign(
-        { id: user.id, email: user.email, role: user.role },
-        SECRET,
-        { expiresIn: "7d" }
-    );
+  const user = {
+    id: Date.now().toString(),
+    email,
+    password: hashedPassword,
+    role: role || "client"
+  };
 
-    res.json({ token, user });
-}
+  users.push(user);
+  saveUsers(users);
+
+  res.json({ message: "User registered successfully" });
+});
 
 // LOGIN
-function login(req, res) {
-    const { email, password } = req.body;
+router.post("/login", async (req, res) => {
+  const { email, password } = req.body;
 
-    const user = users.find(u => u.email === email);
-    if (!user) {
-        return res.status(400).json({ error: "Invalid credentials" });
-    }
+  let users = loadUsers();
 
-    const valid = bcrypt.compareSync(password, user.password);
-    if (!valid) {
-        return res.status(400).json({ error: "Invalid credentials" });
-    }
+  const user = users.find(u => u.email === email);
+  if (!user) {
+    return res.status(400).json({ message: "Invalid credentials" });
+  }
 
-    const token = jwt.sign(
-        { id: user.id, email: user.email, role: user.role },
-        SECRET,
-        { expiresIn: "7d" }
-    );
+  const isMatch = await bcrypt.compare(password, user.password);
+  if (!isMatch) {
+    return res.status(400).json({ message: "Invalid credentials" });
+  }
 
-    res.json({ token, user });
-}
+  const token = jwt.sign(
+    { id: user.id, email: user.email, role: user.role },
+    JWT_SECRET,
+    { expiresIn: "7d" }
+  );
 
-// AUTH MIDDLEWARE
+  res.json({ token, user: { id: user.id, email: user.email, role: user.role } });
+});
+
+// middleware
 function authMiddleware(req, res, next) {
-    const header = req.headers.authorization;
+  const header = req.headers.authorization;
+  if (!header) return res.status(401).json({ message: "No token" });
 
-    if (!header) {
-        return res.status(401).json({ error: "No token" });
-    }
+  const token = header.split(" ")[1];
 
-    try {
-        const token = header.split(" ")[1];
-        const decoded = jwt.verify(token, SECRET);
-        req.user = decoded;
-        next();
-    } catch (err) {
-        res.status(401).json({ error: "Invalid token" });
-    }
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    req.user = decoded;
+    next();
+  } catch (err) {
+    res.status(401).json({ message: "Invalid token" });
+  }
 }
 
-module.exports = {
-    register,
-    login,
-    authMiddleware
-};
+module.exports = { router, authMiddleware };
