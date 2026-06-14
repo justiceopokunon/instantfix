@@ -103,3 +103,19 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log("InstantFix running on port", PORT);
 });
+app.get("/dashboard/:userId", (req, res) => {
+  const { userId } = req.params;
+
+  const userJobs = jobs.filter(
+    job => job.ownerId === userId
+  );
+
+  const stats = {
+    totalJobs: userJobs.length,
+    openJobs: userJobs.filter(j => j.status === "open").length,
+    acceptedJobs: userJobs.filter(j => j.status === "accepted").length,
+    completedJobs: userJobs.filter(j => j.status === "done").length
+  };
+
+  res.json(stats);
+});
