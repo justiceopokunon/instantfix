@@ -1,0 +1,28 @@
+<script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
+
+<script>
+const socket = io("http://localhost:3000");
+
+// identify as helper
+socket.emit("auth:identify", { role: "helper" });
+
+socket.on("jobs:init", renderJobs);
+socket.on("job:new", addJob);
+socket.on("job:update", updateJob);
+
+function acceptJob(id) {
+  socket.emit("job:accept", { jobId: id });
+}
+
+function renderJobs(jobs) {
+  console.log("jobs", jobs);
+}
+
+function addJob(job) {
+  console.log("new job", job);
+}
+
+function updateJob(job) {
+  console.log("updated job", job);
+}
+</script>

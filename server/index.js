@@ -77,3 +77,36 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log("InstantFix running on port", PORT);
 });
+
+users[socket.id] = {
+  id: socket.id,
+  role: null
+};
+
+socket.on("set:role", (role) => {
+  if (role !== "client" && role !== "helper") return;
+
+  users[socket.id].role = role;
+  socket.emit("role:set", users[socket.id]);
+});
+
+socket.on("auth:identify", ({ role }) => {
+  users[socket.id] = {
+    id: socket.id,
+    role
+  };
+
+  socket.emit("auth:ok", users[socket.id]);
+});
+
+socket.on("job:accept", ({ jobId }) => {
+  if (users[socket.id]?.role !== "helper") return;
+
+  const job = jobs.find(j => j.id === jobId);
+  if (!job || job.status !== "open") return;
+
+  job.status = "accepted";
+  job.helperId = socket.id;
+
+  io.emit("job:update", job);
+});

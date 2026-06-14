@@ -2,8 +2,8 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>InstantFix Dashboard</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <style>
 body{
@@ -76,24 +76,17 @@ button:hover{
     margin-top:10px;
     border-radius:8px;
 }
-
-.actions{
-    display:flex;
-    gap:10px;
-    margin-top:10px;
-}
-
-.actions button{
-    flex:1;
-}
 </style>
 </head>
-
 <body>
 
 <div class="container">
 
 <h1>InstantFix Dashboard</h1>
+
+<button onclick="logout()" style="background:red;margin-bottom:15px;">
+Logout
+</button>
 
 <div class="stats">
     <div class="card">
@@ -120,16 +113,16 @@ button:hover{
 <div class="section">
     <h2>Create Job</h2>
 
-    <input id="title" placeholder="Job Title">
+    <input type="text" id="title" placeholder="Job Title">
     <textarea id="description" placeholder="Description"></textarea>
-    <input id="location" placeholder="Location">
+    <input type="text" id="location" placeholder="Location">
 
     <button id="createBtn">Post Job</button>
 </div>
 
 <div class="section">
-    <h2>Jobs</h2>
-    <div id="jobsList"></div>
+    <h2>My Jobs</h2>
+    <div id="jobsList">No jobs yet.</div>
 </div>
 
 </div>
@@ -137,50 +130,43 @@ button:hover{
 <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
 
 <script>
-const socket = io("http://localhost:3000");
+const API = "http://localhost:3000";
+const token = localStorage.getItem("token");
+
+// AUTH GUARD
+if (!token) {
+    window.location.href = "auth.html";
+}
+
+// SAFE TOKEN DECODE
+function parseToken(token) {
+    try {
+        return JSON.parse(atob(token.split(".")[1]));
+    } catch (e) {
+        return null;
+    }
+}
+
+const tokenData = parseToken(token);
+
+if (!tokenData) {
+    localStorage.removeItem("token");
+    window.location.href = "auth.html";
+}
+
+// SOCKET WITH AUTH
+const socket = io(API, {
+    auth: { token }
+});
+
 const jobsList = document.getElementById("jobsList");
 
-function updateStats(jobs){
-    document.getElementById("totalJobs").textContent = jobs.length;
-    document.getElementById("openJobs").textContent = jobs.filter(j => j.status === "open").length;
-    document.getElementById("acceptedJobs").textContent = jobs.filter(j => j.status === "accepted").length;
-    document.getElementById("completedJobs").textContent = jobs.filter(j => j.status === "done").length;
-}
-
-function renderJob(job){
-    const el = document.createElement("div");
-    el.className = "job";
-    el.id = job.id;
-
-    el.innerHTML = `
-        <h3>${job.title}</h3>
-        <p>${job.description}</p>
-        <p><b>Location:</b> ${job.location}</p>
-        <p><b>Status:</b> ${job.status}</p>
-
-        <div class="actions">
-            <button onclick="acceptJob('${job.id}')">Accept</button>
-            <button onclick="completeJob('${job.id}')">Complete</button>
-        </div>
-    `;
-
-    jobsList.appendChild(el);
-}
-
-window.acceptJob = function(jobId){
-    socket.emit("job:accept", { jobId });
-};
-
-window.completeJob = function(jobId){
-    socket.emit("job:done", { jobId });
-};
-
 document.getElementById("createBtn").addEventListener("click", () => {
-    socket.emit("job:create", {
-        title: document.getElementById("title").value,
-        description: document.getElementById("description").value,
-        location: document.getElementById("location").value
-    });
+    const title = document.getElementById("title").value;
+    const description = document.getElementById("description").value;
+    const location = document.getElementById("location").value;
+
+    socket.emit("job:create", { title, description, location });
 
     document.getElementById("title").value = "";
     document.getElementById("description").value = "";
@@ -189,30 +175,60 @@ document.getElementById("createBtn").addEventListener("click", () => {
 
 socket.on("jobs:init", (jobs) => {
     jobsList.innerHTML = "";
+
+    document.getElementById("totalJobs").textContent = jobs.length;
+    document.getElementById("openJobs").textContent = jobs.filter(j => j.status === "open").length;
+    document.getElementById("acceptedJobs").textContent = jobs.filter(j => j.status === "accepted").length;
+    document.getElementById("completedJobs").textContent = jobs.filter(j => j.status === "done").length;
+
     jobs.forEach(renderJob);
-    updateStats(jobs);
 });
 
-socket.on("job:new", (job) => {
-    renderJob(job);
+socket.on("job:new", renderJob);
+
+socket.on("job:update", (job) => {
+    const el = document.getElementById(job.id);
+    if (!el) return;
+
+    el.innerHTML = `
+        <h3>${job.title}</h3>
+        <p>${job.description}</p>
+        <small>${job.location}</small>
+        <br>
+        <strong>Status:</strong> ${job.status}
+    `;
 });
 
-socket.on("job:update", () => {
-    fetch("http://localhost:3000/jobs")
-        .then(r => r.json())
-        .then(jobs => {
-            jobsList.innerHTML = "";
-            jobs.forEach(renderJob);
-            updateStats(jobs);
-        });
-});
+function renderJob(job) {
+    const div = document.createElement("div");
+    div.className = "job";
+    div.id = job.id;
+
+    div.innerHTML = `
+        <h3>${job.title}</h3>
+        <p>${job.description}</p>
+        <small>${job.location}</small>
+        <br>
+        <strong>Status:</strong> ${job.status}
+    `;
+
+    jobsList.appendChild(div);
+}
+
+function logout() {
+    localStorage.removeItem("token");
+    window.location.href = "auth.html";
+}
+
+// show role safely
+if (tokenData?.role) {
+    document.querySelector("h1").innerText += ` (${tokenData.role})`;
+}
+
+// hide create section for helpers
+if (tokenData?.role !== "client") {
+    document.querySelector(".section").style.display = "none";
+}
 </script>
-
 </body>
 </html>
-
-
-djndfnjakisaiuebf ahhaaa a n anm aoeufbuqvyadhifhjfajfienjjhjhjhjjustuce iaidcbisihdiasdfhbsdifasidfsidfuiasufisufusdfudfdfdsikkskdfkskd
-sdkaksdf sfhhsudfaeidfawiesiqbsdf  shdifuhasufbvasofaifsfvbiahsfiuajisrfhisfga
-sufighisdfi sfuadfhuhfvudsahifwshffsd 98asufhaf
-husishufwowdksrkarf
