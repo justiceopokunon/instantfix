@@ -2,110 +2,226 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Helper Dashboard</title>
+<title>InstantFix Helper Dashboard</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <style>
 body{
-  font-family: Arial;
-  background:#f4f4f4;
-  padding:20px;
+    font-family: Arial, sans-serif;
+    background:#f4f4f4;
+    margin:0;
+    padding:20px;
 }
 
 .container{
-  max-width:900px;
-  margin:auto;
+    max-width:1000px;
+    margin:auto;
+}
+
+h1{
+    text-align:center;
+}
+
+.stats{
+    display:grid;
+    grid-template-columns:repeat(auto-fit,minmax(200px,1fr));
+    gap:15px;
+    margin-bottom:20px;
+}
+
+.card{
+    background:white;
+    padding:15px;
+    border-radius:10px;
+    text-align:center;
+    box-shadow:0 2px 5px rgba(0,0,0,0.1);
+}
+
+.section{
+    background:white;
+    padding:15px;
+    border-radius:10px;
+    margin-bottom:20px;
+    box-shadow:0 2px 5px rgba(0,0,0,0.1);
 }
 
 .job{
-  background:white;
-  padding:15px;
-  margin-top:10px;
-  border-radius:10px;
-  border:1px solid #ddd;
+    border:1px solid #ddd;
+    padding:10px;
+    border-radius:8px;
+    margin-top:10px;
 }
 
 button{
-  width:100%;
-  padding:10px;
-  margin-top:8px;
-  cursor:pointer;
+    padding:8px 12px;
+    margin-top:8px;
+    border:none;
+    cursor:pointer;
+}
+
+.accept{
+    background:green;
+    color:white;
+}
+
+.done{
+    background:blue;
+    color:white;
+}
+
+.logout{
+    background:red;
+    color:white;
+    margin-bottom:15px;
+    width:100%;
 }
 </style>
 </head>
-
 <body>
 
 <div class="container">
-  <h1>Helper Dashboard</h1>
-  <div id="jobs"></div>
+
+<h1>Helper Marketplace</h1>
+
+<button class="logout" onclick="logout()">Logout</button>
+
+<div class="stats">
+    <div class="card">
+        <p>Open Jobs</p>
+        <h2 id="openCount">0</h2>
+    </div>
+
+    <div class="card">
+        <p>Accepted Jobs</p>
+        <h2 id="acceptedCount">0</h2>
+    </div>
+
+    <div class="card">
+        <p>My Jobs</p>
+        <h2 id="mineCount">0</h2>
+    </div>
+</div>
+
+<div class="section">
+    <h3>Available Jobs</h3>
+    <div id="openJobs"></div>
+</div>
+
+<div class="section">
+    <h3>My Accepted Jobs</h3>
+    <div id="myJobs"></div>
+</div>
+
 </div>
 
 <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
 
 <script>
-const socket = io("http://localhost:3000", {
-  auth: {
-    token: localStorage.getItem("token")
-  }
+const API = "http://localhost:3000";
+const token = localStorage.getItem("token");
+
+if (!token) {
+    window.location.href = "auth.html";
+}
+
+const socket = io(API, {
+    auth: { token }
 });
 
-const jobsDiv = document.getElementById("jobs");
+const openJobsDiv = document.getElementById("openJobs");
+const myJobsDiv = document.getElementById("myJobs");
 
-/* DEBUG */
+let allJobs = [];
+
 socket.on("connect", () => {
-  console.log("CONNECTED:", socket.id);
+    console.log("connected to helper socket");
 });
 
-socket.on("connect_error", (err) => {
-  console.log("CONNECT ERROR:", err.message);
-});
-
-/* INIT JOBS */
 socket.on("jobs:init", (jobs) => {
-  console.log("JOBS RECEIVED:", jobs);
-  jobsDiv.innerHTML = "";
-  jobs.forEach(renderJob);
+    allJobs = jobs;
+    render();
 });
 
-/* NEW JOB */
 socket.on("job:new", (job) => {
-  renderJob(job);
+    allJobs.push(job);
+    render();
 });
 
-/* UPDATE JOB */
 socket.on("job:update", (job) => {
-  const el = document.getElementById(job.id);
-  if (el) {
-    el.innerHTML = buildJob(job);
-  }
+    allJobs = allJobs.map(j => j.id === job.id ? job : j);
+    render();
 });
 
-function renderJob(job){
-  const div = document.createElement("div");
-  div.className = "job";
-  div.id = job.id;
-  div.innerHTML = buildJob(job);
-  jobsDiv.appendChild(div);
+function render() {
+    const openJobs = allJobs.filter(j => j.status === "open");
+    const myJobs = allJobs.filter(j => j.workerId === getUserId());
+    const accepted = allJobs.filter(j => j.status === "accepted");
+
+    document.getElementById("openCount").innerText = openJobs.length;
+    document.getElementById("acceptedCount").innerText = accepted.length;
+    document.getElementById("mineCount").innerText = myJobs.length;
+
+    openJobsDiv.innerHTML = "";
+    myJobsDiv.innerHTML = "";
+
+    openJobs.forEach(job => {
+        const div = document.createElement("div");
+        div.className = "job";
+
+        div.innerHTML = `
+            <b>${job.title}</b>
+            <p>${job.description}</p>
+            <small>${job.location}</small>
+            <br>
+            <button class="accept" onclick="acceptJob('${job.id}')">
+                Accept Job
+            </button>
+        `;
+
+        openJobsDiv.appendChild(div);
+    });
+
+    myJobs.forEach(job => {
+        const div = document.createElement("div");
+        div.className = "job";
+
+        div.innerHTML = `
+            <b>${job.title}</b>
+            <p>${job.description}</p>
+            <small>${job.location}</small>
+            <br>
+            <b>Status:</b> ${job.status}
+            <br>
+        `;
+
+        if (job.status === "accepted") {
+            div.innerHTML += `
+                <button class="done" onclick="completeJob('${job.id}')">
+                    Mark Done
+                </button>
+            `;
+        }
+
+        myJobsDiv.appendChild(div);
+    });
 }
 
-function buildJob(job){
-  return `
-    <h3>${job.title}</h3>
-    <p>${job.description}</p>
-    <small>${job.location}</small>
-    <br>
-    <b>Status:</b> ${job.status}
-    ${job.status === "open" ? `<button onclick="acceptJob('${job.id}')">Accept</button>` : ""}
-    ${job.status === "accepted" ? `<button onclick="doneJob('${job.id}')">Mark Done</button>` : ""}
-  `;
+function acceptJob(id) {
+    socket.emit("job:accept", { jobId: id });
 }
 
-function acceptJob(jobId){
-  socket.emit("job:accept", { jobId });
+function completeJob(id) {
+    socket.emit("job:done", { jobId: id });
 }
 
-function doneJob(jobId){
-  socket.emit("job:done", { jobId });
+function logout() {
+    localStorage.removeItem("token");
+    window.location.href = "auth.html";
+}
+
+function getUserId() {
+    const payload = JSON.parse(atob(token.split(".")[1]));
+    return payload.id;
 }
 </script>
 
