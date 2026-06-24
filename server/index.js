@@ -51,15 +51,33 @@ const isHelper = (s) => s.user.role === "helper";
 const isAdmin = (s) => s.user.role === "admin";
 
 /* =========================
-   CONNECTION + ROOMS
+   ACTIVITY LOGGER
+========================= */
+function logActivity(io, db, { userId, role, action, metadata }) {
+  const log = {
+    userId: userId || null,
+    role: role || "system",
+    action,
+    metadata: metadata ? JSON.stringify(metadata) : null,
+    createdAt: new Date().toISOString()
+  };
+
+  db.run(
+    `INSERT INTO activity_logs (userId, role, action, metadata, createdAt)
+     VALUES (?, ?, ?, ?, ?)`,
+    [log.userId, log.role, log.action, log.metadata, log.createdAt]
+  );
+
+  io.to("admin").emit("activity:new", log);
+}
+
+/* =========================
+   CONNECTION
 ========================= */
 io.on("connection", (socket) => {
   console.log("CONNECTED:", socket.user.email, socket.user.role);
 
-  /* join role room */
   socket.join(socket.user.role);
-
-  /* user-specific room */
   socket.join(`user:${socket.user.id}`);
 
   sendJobs(socket);
@@ -106,6 +124,13 @@ io.on("connection", (socket) => {
 
         io.to("helper").emit("job:new", job);
         io.to(`user:${job.clientId}`).emit("job:new", job);
+
+        logActivity(io, db, {
+          userId: job.clientId,
+          role: "client",
+          action: "job_created",
+          metadata: job
+        });
       }
     );
   });
@@ -117,14 +142,10 @@ io.on("connection", (socket) => {
     if (!isHelper(socket)) return;
 
     db.get("SELECT * FROM jobs WHERE id = ?", [jobId], (err, job) => {
-      if (err || !job) return;
-      if (job.status !== "open") return;
+      if (err || !job || job.status !== "open") return;
 
       db.run(
-        `UPDATE jobs
-         SET status='accepted',
-             workerId=?,
-             updatedAt=CURRENT_TIMESTAMP
+        `UPDATE jobs SET status='accepted', workerId=?, updatedAt=CURRENT_TIMESTAMP
          WHERE id=? AND status='open'`,
         [socket.user.id, jobId],
         (err) => {
@@ -134,6 +155,13 @@ io.on("connection", (socket) => {
             if (!err && updated) {
               io.to("helper").emit("job:update", updated);
               io.to(`user:${updated.clientId}`).emit("job:update", updated);
+
+              logActivity(io, db, {
+                userId: socket.user.id,
+                role: "helper",
+                action: "job_accepted",
+                metadata: { jobId }
+              });
             }
           });
         }
@@ -148,13 +176,10 @@ io.on("connection", (socket) => {
     if (!isHelper(socket)) return;
 
     db.get("SELECT * FROM jobs WHERE id = ?", [jobId], (err, job) => {
-      if (err || !job) return;
-      if (job.workerId !== socket.user.id) return;
+      if (err || !job || job.workerId !== socket.user.id) return;
 
       db.run(
-        `UPDATE jobs
-         SET status='done',
-             updatedAt=CURRENT_TIMESTAMP
+        `UPDATE jobs SET status='done', updatedAt=CURRENT_TIMESTAMP
          WHERE id=?`,
         [jobId],
         (err) => {
@@ -164,45 +189,49 @@ io.on("connection", (socket) => {
             if (!err && updated) {
               io.to("helper").emit("job:update", updated);
               io.to(`user:${updated.clientId}`).emit("job:update", updated);
+
+              logActivity(io, db, {
+                userId: socket.user.id,
+                role: "helper",
+                action: "job_completed",
+                metadata: { jobId }
+              });
             }
           });
         }
       );
     });
   });
+
+  /* =========================
+     ADMIN LOG STREAM
+  ========================= */
+  socket.on("admin:logs:live", () => {
+    if (!isAdmin(socket)) return;
+
+    db.all(
+      "SELECT * FROM activity_logs ORDER BY id DESC LIMIT 100",
+      [],
+      (err, rows) => {
+        if (!err) socket.emit("activity:init", rows || []);
+      }
+    );
+  });
+
+  socket.on("disconnect", () => {
+    console.log("DISCONNECTED:", socket.user.email);
+  });
 });
 
 /* =========================
-   ROLE-AWARE INITIAL LOAD
+   SEND JOBS
 ========================= */
 function sendJobs(socket) {
-  const role = socket.user.role;
-
-  if (role === "helper") {
-    return db.all(
-      `SELECT * FROM jobs WHERE status='open' ORDER BY createdAt DESC`,
-      [],
-      (err, rows) => {
-        if (!err) socket.emit("jobs:init", rows || []);
-      }
-    );
-  }
-
-  if (role === "client") {
-    return db.all(
-      `SELECT * FROM jobs WHERE clientId=? ORDER BY createdAt DESC`,
-      [socket.user.id],
-      (err, rows) => {
-        if (!err) socket.emit("jobs:init", rows || []);
-      }
-    );
-  }
-
-  if (role === "admin") {
-    return db.all(`SELECT * FROM jobs ORDER BY createdAt DESC`, [], (err, rows) => {
-      if (!err) socket.emit("jobs:init", rows || []);
-    });
-  }
+  db.all("SELECT * FROM jobs", [], (err, rows) => {
+    if (!err) {
+      socket.emit("jobs:init", rows || []);
+    }
+  });
 }
 
 /* =========================

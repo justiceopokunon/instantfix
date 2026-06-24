@@ -2,40 +2,60 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Admin Dashboard</title>
+<title>InstantFix Admin</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <style>
-body{
-  font-family: Arial;
-  background:#f4f4f4;
-  margin:0;
-  padding:20px;
+body {
+  font-family: Arial, sans-serif;
+  background: #f4f4f4;
+  margin: 0;
+  padding: 20px;
 }
 
-.container{
-  max-width:1000px;
-  margin:auto;
+.container {
+  max-width: 1100px;
+  margin: auto;
 }
 
-.section{
-  background:white;
-  padding:20px;
-  margin-bottom:20px;
-  border-radius:10px;
+h1 {
+  text-align: center;
 }
 
-.item{
-  padding:10px;
-  border:1px solid #ddd;
-  margin-top:10px;
-  border-radius:8px;
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 15px;
 }
 
-button{
-  width:100%;
-  padding:8px;
-  margin-top:5px;
-  cursor:pointer;
+.card {
+  background: white;
+  padding: 15px;
+  border-radius: 10px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+  margin-top: 10px;
+}
+
+button {
+  margin-top: 8px;
+  padding: 8px;
+  width: 100%;
+  border: none;
+  cursor: pointer;
+  background: black;
+  color: white;
+}
+
+button:hover {
+  opacity: 0.85;
+}
+
+.delete {
+  background: red;
+}
+
+.roleBtn {
+  margin-top: 5px;
 }
 </style>
 </head>
@@ -44,94 +64,161 @@ button{
 
 <div class="container">
 
-<h1>Admin Dashboard</h1>
+<h1>InstantFix Admin Panel</h1>
 
-<div class="section">
-  <h2>Users</h2>
-  <div id="users"></div>
+<div class="grid">
+
+  <div>
+    <h2>Users</h2>
+    <div id="users"></div>
+  </div>
+
+  <div>
+    <h2>Jobs</h2>
+    <div id="jobs"></div>
+  </div>
+
+</div>
+
 </div>
 
 <div class="section">
-  <h2>Jobs</h2>
-  <div id="jobs"></div>
+  <h2>Activity Logs</h2>
+  <div id="logs"></div>
 </div>
 
-</div>
+<script>
+socket.emit("admin:logs:live");
+
+socket.on("activity:init", renderLogs);
+socket.on("activity:new", prependLog);
+
+function renderLogs(logs) {
+  const el = document.getElementById("logs");
+  el.innerHTML = "";
+  logs.forEach(prependLog);
+}
+
+function prependLog(log) {
+  const el = document.getElementById("logs");
+
+  const div = document.createElement("div");
+  div.className = "job";
+
+  let meta = "";
+  try {
+    meta = log.metadata ? JSON.stringify(JSON.parse(log.metadata)) : "";
+  } catch {}
+
+  div.innerHTML = `
+    <b>${log.action}</b><br>
+    Role: ${log.role}<br>
+    <small>${log.createdAt}</small><br>
+    <code>${meta}</code>
+  `;
+
+  el.prepend(div);
+}
+</script>
 
 <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
 
 <script>
+const API = "http://localhost:3000";
 const token = localStorage.getItem("token");
-if (!token) location.href = "auth.html";
 
-function getTokenPayload(tokenValue) {
-  const part = tokenValue.split(".")[1] || "";
-  const normalized = part.replace(/-/g, "+").replace(/_/g, "/");
-  const padded = normalized + "=".repeat((4 - normalized.length % 4) % 4);
-  return JSON.parse(atob(padded));
+if (!token) {
+  window.location.href = "auth.html";
 }
 
-const payload = getTokenPayload(token);
-
-if (payload.role !== "admin") {
-  alert("Admin only");
-  location.href = "dashboard.html";
-}
-
-const socket = io("http://localhost:3000", {
+const socket = io(API, {
   auth: { token }
 });
 
-const usersDiv = document.getElementById("users");
-const jobsDiv = document.getElementById("jobs");
+/* =========================
+   STATE
+========================= */
+const state = {
+  users: [],
+  jobs: []
+};
 
-// USERS
-socket.emit("admin:users");
+/* =========================
+   INIT STREAMS
+========================= */
+socket.emit("admin:users:live");
+socket.emit("admin:jobs:live");
 
-socket.on("admin:users:data", (users) => {
-  usersDiv.innerHTML = "";
-
-  users.forEach(u => {
-    const div = document.createElement("div");
-    div.className = "item";
-
-    div.innerHTML = `
-      <b>${u.email}</b><br>
-      Role: ${u.role}
-      <button onclick="setRole('${u.id}', 'client')">Client</button>
-      <button onclick="setRole('${u.id}', 'helper')">Helper</button>
-      <button onclick="setRole('${u.id}', 'admin')">Admin</button>
-    `;
-
-    usersDiv.appendChild(div);
-  });
+/* =========================
+   SOCKET LISTENERS
+========================= */
+socket.on("admin:users:update", (users) => {
+  state.users = users || [];
+  renderUsers();
 });
 
-// JOBS
-socket.emit("admin:jobs");
-
-socket.on("admin:jobs:data", (jobs) => {
-  jobsDiv.innerHTML = "";
-
-  jobs.forEach(j => {
-    const div = document.createElement("div");
-    div.className = "item";
-
-    div.innerHTML = `
-      <b>${j.title}</b><br>
-      Status: ${j.status}
-      <button onclick="deleteJob('${j.id}')">Delete</button>
-    `;
-
-    jobsDiv.appendChild(div);
-  });
+socket.on("admin:jobs:update", (jobs) => {
+  state.jobs = jobs || [];
+  renderJobs();
 });
 
-function setRole(userId, role){
+/* =========================
+   USERS RENDER
+========================= */
+function renderUsers() {
+  const el = document.getElementById("users");
+  el.innerHTML = "";
+
+  state.users.forEach(u => {
+    const div = document.createElement("div");
+    div.className = "card";
+
+    div.innerHTML = `
+      <b>${u.email}</b>
+      <p>Role: ${u.role}</p>
+
+      <button class="roleBtn" onclick="setRole(${u.id}, 'client')">Client</button>
+      <button class="roleBtn" onclick="setRole(${u.id}, 'helper')">Helper</button>
+      <button class="roleBtn" onclick="setRole(${u.id}, 'admin')">Admin</button>
+    `;
+
+    el.appendChild(div);
+  });
+}
+
+/* =========================
+   JOBS RENDER
+========================= */
+function renderJobs() {
+  const el = document.getElementById("jobs");
+  el.innerHTML = "";
+
+  state.jobs.forEach(j => {
+    const div = document.createElement("div");
+    div.className = "card";
+
+    div.innerHTML = `
+      <b>${j.title}</b>
+      <p>Status: ${j.status}</p>
+      <small>${j.location}</small>
+
+      <button class="delete" onclick="deleteJob('${j.id}')">
+        Delete Job
+      </button>
+    `;
+
+    el.appendChild(div);
+  });
+}
+
+/* =========================
+   ACTIONS
+========================= */
+function setRole(userId, role) {
   socket.emit("admin:setRole", { userId, role });
 }
 
-function deleteJob(jobId){
+function deleteJob(jobId) {
   socket.emit("admin:deleteJob", { jobId });
 }
 </script>
