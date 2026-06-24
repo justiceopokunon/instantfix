@@ -121,107 +121,143 @@ const API = "http://localhost:3000";
 const token = localStorage.getItem("token");
 
 if (!token) {
-    window.location.href = "auth.html";
+  window.location.href = "auth.html";
 }
 
 const socket = io(API, {
-    auth: { token }
+  auth: { token }
 });
 
-const openJobsDiv = document.getElementById("openJobs");
-const myJobsDiv = document.getElementById("myJobs");
+/* =========================
+   STATE ENGINE
+========================= */
+const state = {
+  jobs: []
+};
 
-let allJobs = [];
+/* =========================
+   HELPERS
+========================= */
+function setJobs(jobs) {
+  state.jobs = jobs;
+  render();
+}
 
-socket.on("connect", () => {
-    console.log("connected to helper socket");
-});
+function upsertJob(job) {
+  const index = state.jobs.findIndex(j => j.id === job.id);
 
+  if (index === -1) {
+    state.jobs.push(job);
+  } else {
+    state.jobs[index] = job;
+  }
+
+  render();
+}
+
+/* =========================
+   SOCKET EVENTS
+========================= */
 socket.on("jobs:init", (jobs) => {
-    allJobs = jobs;
-    render();
+  setJobs(jobs || []);
 });
 
 socket.on("job:new", (job) => {
-    allJobs.push(job);
-    render();
+  upsertJob(job);
 });
 
 socket.on("job:update", (job) => {
-    allJobs = allJobs.map(j => j.id === job.id ? job : j);
-    render();
+  upsertJob(job);
 });
 
+/* =========================
+   RENDER ENGINE
+========================= */
 function render() {
-    const openJobs = allJobs.filter(j => j.status === "open");
-    const myJobs = allJobs.filter(j => j.workerId === getUserId());
-    const accepted = allJobs.filter(j => j.status === "accepted");
+  const openJobs = state.jobs.filter(j => j.status === "open");
+  const myJobs = state.jobs.filter(j => j.workerId === getUserId());
+  const accepted = state.jobs.filter(j => j.status === "accepted");
 
-    document.getElementById("openCount").innerText = openJobs.length;
-    document.getElementById("acceptedCount").innerText = accepted.length;
-    document.getElementById("mineCount").innerText = myJobs.length;
+  document.getElementById("openCount").innerText = openJobs.length;
+  document.getElementById("acceptedCount").innerText = accepted.length;
+  document.getElementById("mineCount").innerText = myJobs.length;
 
-    openJobsDiv.innerHTML = "";
-    myJobsDiv.innerHTML = "";
-
-    openJobs.forEach(job => {
-        const div = document.createElement("div");
-        div.className = "job";
-
-        div.innerHTML = `
-            <b>${job.title}</b>
-            <p>${job.description}</p>
-            <small>${job.location}</small>
-            <br>
-            <button class="accept" onclick="acceptJob('${job.id}')">
-                Accept Job
-            </button>
-        `;
-
-        openJobsDiv.appendChild(div);
-    });
-
-    myJobs.forEach(job => {
-        const div = document.createElement("div");
-        div.className = "job";
-
-        div.innerHTML = `
-            <b>${job.title}</b>
-            <p>${job.description}</p>
-            <small>${job.location}</small>
-            <br>
-            <b>Status:</b> ${job.status}
-            <br>
-        `;
-
-        if (job.status === "accepted") {
-            div.innerHTML += `
-                <button class="done" onclick="completeJob('${job.id}')">
-                    Mark Done
-                </button>
-            `;
-        }
-
-        myJobsDiv.appendChild(div);
-    });
+  renderOpen(openJobs);
+  renderMine(myJobs);
 }
 
+function renderOpen(jobs) {
+  const el = document.getElementById("openJobs");
+  el.innerHTML = "";
+
+  jobs.forEach(job => {
+    const div = document.createElement("div");
+    div.className = "job";
+
+    div.innerHTML = `
+      <b>${job.title}</b>
+      <p>${job.description}</p>
+      <small>${job.location}</small>
+      <br>
+      <button class="accept" onclick="acceptJob('${job.id}')">
+        Accept Job
+      </button>
+    `;
+
+    el.appendChild(div);
+  });
+}
+
+function renderMine(jobs) {
+  const el = document.getElementById("myJobs");
+  el.innerHTML = "";
+
+  jobs.forEach(job => {
+    const div = document.createElement("div");
+    div.className = "job";
+
+    div.innerHTML = `
+      <b>${job.title}</b>
+      <p>${job.description}</p>
+      <small>${job.location}</small>
+      <br>
+      <b>Status:</b> ${job.status}
+    `;
+
+    if (job.status === "accepted") {
+      div.innerHTML += `
+        <button class="done" onclick="completeJob('${job.id}')">
+          Mark Done
+        </button>
+      `;
+    }
+
+    el.appendChild(div);
+  });
+}
+
+/* =========================
+   ACTIONS
+========================= */
 function acceptJob(id) {
-    socket.emit("job:accept", { jobId: id });
+  socket.emit("job:accept", { jobId: id });
 }
 
 function completeJob(id) {
-    socket.emit("job:done", { jobId: id });
+  socket.emit("job:done", { jobId: id });
+}
+
+/* =========================
+   AUTH HELPERS
+========================= */
+function getUserId() {
+  const payload = JSON.parse(atob(token.split(".")[1]));
+  return payload.id;
 }
 
 function logout() {
-    localStorage.removeItem("token");
-    window.location.href = "auth.html";
-}
-
-function getUserId() {
-    const payload = JSON.parse(atob(token.split(".")[1]));
-    return payload.id;
+  localStorage.removeItem("token");
+  window.location.href = "auth.html";
 }
 </script>
 
