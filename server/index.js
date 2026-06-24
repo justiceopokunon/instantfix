@@ -51,42 +51,16 @@ const isHelper = (s) => s.user.role === "helper";
 const isAdmin = (s) => s.user.role === "admin";
 
 /* =========================
-   FILTER ENGINE
-========================= */
-function sendHelperJobs(socket) {
-  db.all(
-    `SELECT * FROM jobs WHERE status = 'open' ORDER BY createdAt DESC`,
-    [],
-    (err, rows) => {
-      if (!err) socket.emit("jobs:init", rows || []);
-    }
-  );
-}
-
-function sendClientJobs(socket) {
-  db.all(
-    `SELECT * FROM jobs WHERE clientId = ? ORDER BY createdAt DESC`,
-    [socket.user.id],
-    (err, rows) => {
-      if (!err) socket.emit("jobs:init", rows || []);
-    }
-  );
-}
-
-function sendJobs(socket) {
-  if (isHelper(socket)) return sendHelperJobs(socket);
-  if (isClient(socket)) return sendClientJobs(socket);
-
-  db.all(`SELECT * FROM jobs`, [], (err, rows) => {
-    if (!err) socket.emit("jobs:init", rows || []);
-  });
-}
-
-/* =========================
-   CONNECTION
+   CONNECTION + ROOMS
 ========================= */
 io.on("connection", (socket) => {
   console.log("CONNECTED:", socket.user.email, socket.user.role);
+
+  /* join role room */
+  socket.join(socket.user.role);
+
+  /* user-specific room */
+  socket.join(`user:${socket.user.id}`);
 
   sendJobs(socket);
 
@@ -97,6 +71,7 @@ io.on("connection", (socket) => {
   ========================= */
   socket.on("job:create", (data) => {
     if (!isClient(socket)) return;
+    if (!data?.title || !data?.description || !data?.location) return;
 
     const job = {
       id: Date.now().toString(),
@@ -129,8 +104,8 @@ io.on("connection", (socket) => {
       (err) => {
         if (err) return console.log(err.message);
 
-        io.to(getRole("helper")).emit("job:new", job);
-        io.to(getRole("client")).emit("job:new", job);
+        io.to("helper").emit("job:new", job);
+        io.to(`user:${job.clientId}`).emit("job:new", job);
       }
     );
   });
@@ -146,15 +121,19 @@ io.on("connection", (socket) => {
       if (job.status !== "open") return;
 
       db.run(
-        `UPDATE jobs SET status='accepted', workerId=?, updatedAt=CURRENT_TIMESTAMP WHERE id=?`,
+        `UPDATE jobs
+         SET status='accepted',
+             workerId=?,
+             updatedAt=CURRENT_TIMESTAMP
+         WHERE id=? AND status='open'`,
         [socket.user.id, jobId],
         (err) => {
           if (err) return;
 
           db.get("SELECT * FROM jobs WHERE id = ?", [jobId], (err, updated) => {
             if (!err && updated) {
-              io.to(getRole("helper")).emit("job:update", updated);
-              io.to(getRole("client")).emit("job:update", updated);
+              io.to("helper").emit("job:update", updated);
+              io.to(`user:${updated.clientId}`).emit("job:update", updated);
             }
           });
         }
@@ -173,15 +152,18 @@ io.on("connection", (socket) => {
       if (job.workerId !== socket.user.id) return;
 
       db.run(
-        `UPDATE jobs SET status='done', updatedAt=CURRENT_TIMESTAMP WHERE id=?`,
+        `UPDATE jobs
+         SET status='done',
+             updatedAt=CURRENT_TIMESTAMP
+         WHERE id=?`,
         [jobId],
         (err) => {
           if (err) return;
 
           db.get("SELECT * FROM jobs WHERE id = ?", [jobId], (err, updated) => {
             if (!err && updated) {
-              io.to(getRole("helper")).emit("job:update", updated);
-              io.to(getRole("client")).emit("job:update", updated);
+              io.to("helper").emit("job:update", updated);
+              io.to(`user:${updated.clientId}`).emit("job:update", updated);
             }
           });
         }
@@ -191,12 +173,36 @@ io.on("connection", (socket) => {
 });
 
 /* =========================
-   ROLE ROOM MAPPER
+   ROLE-AWARE INITIAL LOAD
 ========================= */
-function getRole(role) {
-  return Array.from(io.sockets.sockets.values())
-    .filter(s => s.user?.role === role)
-    .map(s => s.id);
+function sendJobs(socket) {
+  const role = socket.user.role;
+
+  if (role === "helper") {
+    return db.all(
+      `SELECT * FROM jobs WHERE status='open' ORDER BY createdAt DESC`,
+      [],
+      (err, rows) => {
+        if (!err) socket.emit("jobs:init", rows || []);
+      }
+    );
+  }
+
+  if (role === "client") {
+    return db.all(
+      `SELECT * FROM jobs WHERE clientId=? ORDER BY createdAt DESC`,
+      [socket.user.id],
+      (err, rows) => {
+        if (!err) socket.emit("jobs:init", rows || []);
+      }
+    );
+  }
+
+  if (role === "admin") {
+    return db.all(`SELECT * FROM jobs ORDER BY createdAt DESC`, [], (err, rows) => {
+      if (!err) socket.emit("jobs:init", rows || []);
+    });
+  }
 }
 
 /* =========================
