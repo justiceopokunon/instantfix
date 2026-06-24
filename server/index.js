@@ -19,13 +19,10 @@ const io = new Server(server, {
 });
 
 /* =========================
-   FRONTEND SERVING
+   FRONTEND
 ========================= */
 app.use(express.static(path.join(__dirname, "../client")));
 
-/* =========================
-   AUTH ROUTES
-========================= */
 app.use("/auth", authRouter);
 
 app.get("/", (req, res) => {
@@ -38,10 +35,7 @@ app.get("/", (req, res) => {
 io.use((socket, next) => {
   try {
     const token = socket.handshake.auth?.token;
-
-    if (!token) {
-      return next(new Error("No token provided"));
-    }
+    if (!token) return next(new Error("No token"));
 
     const decoded = jwt.verify(token, JWT_SECRET);
     socket.user = decoded;
@@ -53,22 +47,29 @@ io.use((socket, next) => {
 });
 
 /* =========================
+   ROLE HELPERS
+========================= */
+const isClient = (s) => s.user.role === "client";
+const isHelper = (s) => s.user.role === "helper";
+const isAdmin = (s) => s.user.role === "admin";
+
+/* =========================
    CONNECTION
 ========================= */
 io.on("connection", (socket) => {
   console.log("CONNECTED:", socket.user.email, socket.user.role);
 
-  // DEBUG: confirm connection
   socket.emit("connected", { user: socket.user });
 
-  // SEND JOBS (ALWAYS ON CONNECT)
   sendJobs(socket);
 
   /* =========================
      CREATE JOB
   ========================= */
   socket.on("job:create", (data) => {
-    if (socket.user.role !== "client") return;
+    if (!isClient(socket)) return;
+
+    if (!data?.title || !data?.description || !data?.location) return;
 
     const job = {
       id: Date.now().toString(),
@@ -93,118 +94,118 @@ io.on("connection", (socket) => {
         job.workerId
       ],
       (err) => {
-        if (err) {
-          console.log("DB ERROR:", err.message);
-          return;
-        }
-
+        if (err) return console.log(err.message);
         io.emit("job:new", job);
       }
     );
   });
 
-  /* ---------------- ADMIN USERS ---------------- */
-  socket.on("admin:users", () => {
-    if (socket.user.role !== "admin") return;
-
-    db.all("SELECT id, email, role FROM users ORDER BY id DESC", [], (err, rows) => {
-      if (err) {
-        console.log("ADMIN USERS ERROR:", err.message);
-        return;
-      }
-
-      socket.emit("admin:users:data", rows || []);
-    });
-  });
-
-  /* ---------------- ADMIN JOBS ---------------- */
-  socket.on("admin:jobs", () => {
-    if (socket.user.role !== "admin") return;
-
-    db.all("SELECT * FROM jobs ORDER BY id DESC", [], (err, rows) => {
-      if (err) {
-        console.log("ADMIN JOBS ERROR:", err.message);
-        return;
-      }
-
-      socket.emit("admin:jobs:data", rows || []);
-    });
-  });
-
-  /* ---------------- ADMIN SET ROLE ---------------- */
-  socket.on("admin:setRole", ({ userId, role }) => {
-    if (socket.user.role !== "admin") return;
-
-    db.run("UPDATE users SET role = ? WHERE id = ?", [role, userId], (err) => {
-      if (err) {
-        console.log("ADMIN SET ROLE ERROR:", err.message);
-        return;
-      }
-
-      db.all("SELECT id, email, role FROM users ORDER BY id DESC", [], (listErr, rows) => {
-        if (!listErr) {
-          socket.emit("admin:users:data", rows || []);
-          socket.broadcast.emit("admin:users:data", rows || []);
-        }
-      });
-    });
-  });
-
-  /* ---------------- ADMIN DELETE JOB ---------------- */
-  socket.on("admin:deleteJob", ({ jobId }) => {
-    if (socket.user.role !== "admin") return;
-
-    db.run("DELETE FROM jobs WHERE id = ?", [jobId], (err) => {
-      if (err) {
-        console.log("ADMIN DELETE JOB ERROR:", err.message);
-        return;
-      }
-
-      db.all("SELECT * FROM jobs ORDER BY id DESC", [], (listErr, rows) => {
-        if (!listErr) {
-          socket.emit("admin:jobs:data", rows || []);
-          socket.broadcast.emit("admin:jobs:data", rows || []);
-        }
-      });
-    });
-  });
-
   /* =========================
-     ACCEPT JOB
+     ACCEPT JOB (HARD RULES)
   ========================= */
   socket.on("job:accept", ({ jobId }) => {
-    if (socket.user.role !== "helper") return;
+    if (!isHelper(socket)) return;
 
-    db.run(
-      `UPDATE jobs SET status = 'accepted', workerId = ? WHERE id = ? AND status = 'open'`,
-      [socket.user.id, jobId],
-      (err) => {
-        if (err) return console.log(err.message);
+    db.get("SELECT * FROM jobs WHERE id = ?", [jobId], (err, job) => {
+      if (err || !job) return;
 
-        db.get("SELECT * FROM jobs WHERE id = ?", [jobId], (err, job) => {
-          if (job) io.emit("job:update", job);
-        });
+      if (job.status !== "open") return;
+      if (job.workerId) return;
+
+      db.run(
+        `UPDATE jobs SET status = 'accepted', workerId = ? WHERE id = ? AND status = 'open'`,
+        [socket.user.id, jobId],
+        (err) => {
+          if (err) return console.log(err.message);
+
+          db.get("SELECT * FROM jobs WHERE id = ?", [jobId], (err, updated) => {
+            if (updated) io.emit("job:update", updated);
+          });
+        }
+      );
+    });
+  });
+
+  /* =========================
+     COMPLETE JOB (OWNER ONLY)
+  ========================= */
+  socket.on("job:done", ({ jobId }) => {
+    if (!isHelper(socket)) return;
+
+    db.get("SELECT * FROM jobs WHERE id = ?", [jobId], (err, job) => {
+      if (err || !job) return;
+
+      if (job.status !== "accepted") return;
+      if (job.workerId !== socket.user.id) return;
+
+      db.run(
+        `UPDATE jobs SET status = 'done' WHERE id = ?`,
+        [jobId],
+        (err) => {
+          if (err) return console.log(err.message);
+
+          db.get("SELECT * FROM jobs WHERE id = ?", [jobId], (err, updated) => {
+            if (updated) io.emit("job:update", updated);
+          });
+        }
+      );
+    });
+  });
+
+  /* =========================
+     ADMIN USERS
+========================= */
+  socket.on("admin:users", () => {
+    if (!isAdmin(socket)) return;
+
+    db.all(
+      "SELECT id, email, role FROM users ORDER BY id DESC",
+      [],
+      (err, rows) => {
+        if (!err) socket.emit("admin:users:data", rows || []);
       }
     );
   });
 
   /* =========================
-     COMPLETE JOB
-  ========================= */
-  socket.on("job:done", ({ jobId }) => {
-    if (socket.user.role !== "helper") return;
+     ADMIN JOBS
+========================= */
+  socket.on("admin:jobs", () => {
+    if (!isAdmin(socket)) return;
+
+    db.all("SELECT * FROM jobs ORDER BY id DESC", [], (err, rows) => {
+      if (!err) socket.emit("admin:jobs:data", rows || []);
+    });
+  });
+
+  /* =========================
+     ADMIN ROLE UPDATE
+========================= */
+  socket.on("admin:setRole", ({ userId, role }) => {
+    if (!isAdmin(socket)) return;
 
     db.run(
-      `UPDATE jobs SET status = 'done' WHERE id = ?`,
-      [jobId],
+      "UPDATE users SET role = ? WHERE id = ?",
+      [role, userId],
       (err) => {
-        if (err) return console.log(err.message);
+        if (err) return;
 
-        db.get("SELECT * FROM jobs WHERE id = ?", [jobId], (err, job) => {
-          if (job) io.emit("job:update", job);
-        });
+        broadcastUsers();
       }
     );
+  });
+
+  /* =========================
+     ADMIN DELETE JOB
+========================= */
+  socket.on("admin:deleteJob", ({ jobId }) => {
+    if (!isAdmin(socket)) return;
+
+    db.run("DELETE FROM jobs WHERE id = ?", [jobId], (err) => {
+      if (err) return;
+
+      broadcastJobs();
+    });
   });
 
   socket.on("disconnect", () => {
@@ -213,17 +214,23 @@ io.on("connection", (socket) => {
 });
 
 /* =========================
-   SEND JOBS FUNCTION
+   HELPERS
 ========================= */
 function sendJobs(socket) {
   db.all("SELECT * FROM jobs", [], (err, rows) => {
-    if (err) {
-      console.log("DB FETCH ERROR:", err.message);
-      return;
-    }
+    if (!err) socket.emit("jobs:init", rows || []);
+  });
+}
 
-    console.log("SENDING JOBS:", rows.length);
-    socket.emit("jobs:init", rows || []);
+function broadcastJobs() {
+  db.all("SELECT * FROM jobs", [], (err, rows) => {
+    if (!err) io.emit("admin:jobs:data", rows || []);
+  });
+}
+
+function broadcastUsers() {
+  db.all("SELECT id, email, role FROM users", [], (err, rows) => {
+    if (!err) io.emit("admin:users:data", rows || []);
   });
 }
 
