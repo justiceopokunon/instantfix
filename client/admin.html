@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Admin Dashboard</title>
+
+<style>
+body{
+  font-family: Arial;
+  background:#f4f4f4;
+  margin:0;
+  padding:20px;
+}
+
+.container{
+  max-width:1000px;
+  margin:auto;
+}
+
+.section{
+  background:white;
+  padding:20px;
+  margin-bottom:20px;
+  border-radius:10px;
+}
+
+.item{
+  padding:10px;
+  border:1px solid #ddd;
+  margin-top:10px;
+  border-radius:8px;
+}
+
+button{
+  width:100%;
+  padding:8px;
+  margin-top:5px;
+  cursor:pointer;
+}
+</style>
+</head>
+
+<body>
+
+<div class="container">
+
+<h1>Admin Dashboard</h1>
+
+<div class="section">
+  <h2>Users</h2>
+  <div id="users"></div>
+</div>
+
+<div class="section">
+  <h2>Jobs</h2>
+  <div id="jobs"></div>
+</div>
+
+</div>
+
+<script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
+
+<script>
+const token = localStorage.getItem("token");
+if (!token) location.href = "auth.html";
+
+function getTokenPayload(tokenValue) {
+  const part = tokenValue.split(".")[1] || "";
+  const normalized = part.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = normalized + "=".repeat((4 - normalized.length % 4) % 4);
+  return JSON.parse(atob(padded));
+}
+
+const payload = getTokenPayload(token);
+
+if (payload.role !== "admin") {
+  alert("Admin only");
+  location.href = "dashboard.html";
+}
+
+const socket = io("http://localhost:3000", {
+  auth: { token }
+});
+
+const usersDiv = document.getElementById("users");
+const jobsDiv = document.getElementById("jobs");
+
+// USERS
+socket.emit("admin:users");
+
+socket.on("admin:users:data", (users) => {
+  usersDiv.innerHTML = "";
+
+  users.forEach(u => {
+    const div = document.createElement("div");
+    div.className = "item";
+
+    div.innerHTML = `
+      <b>${u.email}</b><br>
+      Role: ${u.role}
+      <button onclick="setRole('${u.id}', 'client')">Client</button>
+      <button onclick="setRole('${u.id}', 'helper')">Helper</button>
+      <button onclick="setRole('${u.id}', 'admin')">Admin</button>
+    `;
+
+    usersDiv.appendChild(div);
+  });
+});
+
+// JOBS
+socket.emit("admin:jobs");
+
+socket.on("admin:jobs:data", (jobs) => {
+  jobsDiv.innerHTML = "";
+
+  jobs.forEach(j => {
+    const div = document.createElement("div");
+    div.className = "item";
+
+    div.innerHTML = `
+      <b>${j.title}</b><br>
+      Status: ${j.status}
+      <button onclick="deleteJob('${j.id}')">Delete</button>
+    `;
+
+    jobsDiv.appendChild(div);
+  });
+});
+
+function setRole(userId, role){
+  socket.emit("admin:setRole", { userId, role });
+}
+
+function deleteJob(jobId){
+  socket.emit("admin:deleteJob", { jobId });
+}
+</script>
+
+</body>
+</html>

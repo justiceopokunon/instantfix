@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <title>InstantFix Auth</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <style>
 body {
@@ -18,11 +19,11 @@ body {
   background: white;
   padding: 20px;
   border-radius: 10px;
-  width: 300px;
+  width: 320px;
   box-shadow: 0 2px 10px rgba(0,0,0,0.1);
 }
 
-input, button, select {
+input, select, button {
   width: 100%;
   padding: 10px;
   margin-top: 10px;
@@ -49,7 +50,7 @@ button:hover {
 <body>
 
 <div class="box">
-  <h2>InstantFix Login</h2>
+  <h2>InstantFix</h2>
 
   <input id="email" type="email" placeholder="Email">
   <input id="password" type="password" placeholder="Password">
@@ -59,8 +60,8 @@ button:hover {
     <option value="helper">Helper</option>
   </select>
 
-  <button onclick="login()">Login</button>
   <button onclick="register()">Register</button>
+  <button onclick="login()">Login</button>
 
   <p id="msg"></p>
 </div>
@@ -68,48 +69,55 @@ button:hover {
 <script>
 const API = "http://localhost:3000";
 
+async function register() {
+  const email = emailValue();
+  const password = passwordValue();
+  const role = document.getElementById("role").value;
+
+  const res = await fetch(`${API}/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password, role })
+  });
+
+  const data = await res.json();
+  document.getElementById("msg").innerText = data.message;
+}
+
 async function login() {
-  try {
-    const email = document.getElementById("email").value;
-    const password = document.getElementById("password").value;
+  const email = emailValue();
+  const password = passwordValue();
+  const role = document.getElementById("role").value;
 
-    const res = await fetch(`${API}/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password })
-    });
+  const res = await fetch(`${API}/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password, role })
+  });
 
-    const data = await res.json();
+  const data = await res.json();
 
-    if (data.token) {
-      localStorage.setItem("token", data.token);
-      localStorage.setItem("role", data.role);
-      window.location.href = "dashboard.html";
-    } else {
-      document.getElementById("msg").innerText = data.message || "Login failed";
-    }
-  } catch (err) {
-    document.getElementById("msg").innerText = "Server error";
+  if (!data.token) {
+    document.getElementById("msg").innerText = data.message;
+    return;
+  }
+
+  localStorage.setItem("token", data.token);
+  localStorage.setItem("role", data.role);
+
+  if (data.role === "client") {
+    window.location.href = "dashboard.html";
+  } else {
+    window.location.href = "helper.html";
   }
 }
 
-async function register() {
-  try {
-    const email = document.getElementById("email").value;
-    const password = document.getElementById("password").value;
-    const role = document.getElementById("role").value;
+function emailValue() {
+  return document.getElementById("email").value;
+}
 
-    const res = await fetch(`${API}/auth/register`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password, role })
-    });
-
-    const data = await res.json();
-    document.getElementById("msg").innerText = data.message || "Registered";
-  } catch (err) {
-    document.getElementById("msg").innerText = "Server error";
-  }
+function passwordValue() {
+  return document.getElementById("password").value;
 }
 </script>
 

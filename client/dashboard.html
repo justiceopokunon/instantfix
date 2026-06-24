@@ -6,123 +6,93 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <style>
-body{
-    font-family: Arial, sans-serif;
-    background:#f4f4f4;
-    margin:0;
-    padding:20px;
+body {
+  font-family: Arial;
+  background: #f4f4f4;
+  margin: 0;
+  padding: 20px;
 }
 
-.container{
-    max-width:1000px;
-    margin:auto;
+.container {
+  max-width: 1000px;
+  margin: auto;
 }
 
-h1{
-    text-align:center;
+h1 {
+  text-align: center;
 }
 
-.stats{
-    display:grid;
-    grid-template-columns:repeat(auto-fit,minmax(200px,1fr));
-    gap:15px;
-    margin-bottom:30px;
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 15px;
 }
 
-.card{
-    background:white;
-    padding:20px;
-    border-radius:10px;
-    box-shadow:0 2px 5px rgba(0,0,0,0.1);
-    text-align:center;
+.card {
+  background: white;
+  padding: 20px;
+  border-radius: 10px;
+  text-align: center;
 }
 
-.card h2{
-    margin:0;
-    font-size:2rem;
+.section {
+  background: white;
+  padding: 20px;
+  border-radius: 10px;
+  margin-top: 20px;
 }
 
-.section{
-    background:white;
-    padding:20px;
-    border-radius:10px;
-    margin-bottom:20px;
-    box-shadow:0 2px 5px rgba(0,0,0,0.1);
+input, textarea, button {
+  width: 100%;
+  padding: 10px;
+  margin-top: 10px;
 }
 
-input,
-textarea,
-button{
-    width:100%;
-    padding:12px;
-    margin-top:10px;
-    box-sizing:border-box;
+button {
+  background: black;
+  color: white;
+  border: none;
 }
 
-button{
-    background:black;
-    color:white;
-    border:none;
-    cursor:pointer;
-}
-
-button:hover{
-    opacity:0.9;
-}
-
-.job{
-    border:1px solid #ddd;
-    padding:10px;
-    margin-top:10px;
-    border-radius:8px;
+.job {
+  border: 1px solid #ddd;
+  padding: 10px;
+  margin-top: 10px;
+  border-radius: 8px;
 }
 </style>
 </head>
+
 <body>
 
 <div class="container">
 
 <h1>InstantFix Dashboard</h1>
 
-<button onclick="logout()" style="background:red;margin-bottom:15px;">
+<button onclick="logout()" style="background:red; margin-bottom:10px;">
 Logout
 </button>
 
 <div class="stats">
-    <div class="card">
-        <p>Total Jobs</p>
-        <h2 id="totalJobs">0</h2>
-    </div>
+  <div class="card"><p>Total</p><h2 id="total">0</h2></div>
+  <div class="card"><p>Open</p><h2 id="open">0</h2></div>
+  <div class="card"><p>Accepted</p><h2 id="accepted">0</h2></div>
+  <div class="card"><p>Done</p><h2 id="done">0</h2></div>
+</div>
 
-    <div class="card">
-        <p>Open Jobs</p>
-        <h2 id="openJobs">0</h2>
-    </div>
+<div class="section" id="createSection">
+  <h2>Create Job</h2>
 
-    <div class="card">
-        <p>Accepted Jobs</p>
-        <h2 id="acceptedJobs">0</h2>
-    </div>
+  <input id="title" placeholder="Title">
+  <textarea id="desc" placeholder="Description"></textarea>
+  <input id="location" placeholder="Location">
 
-    <div class="card">
-        <p>Completed Jobs</p>
-        <h2 id="completedJobs">0</h2>
-    </div>
+  <button onclick="createJob()">Post Job</button>
 </div>
 
 <div class="section">
-    <h2>Create Job</h2>
-
-    <input type="text" id="title" placeholder="Job Title">
-    <textarea id="description" placeholder="Description"></textarea>
-    <input type="text" id="location" placeholder="Location">
-
-    <button id="createBtn">Post Job</button>
-</div>
-
-<div class="section">
-    <h2>My Jobs</h2>
-    <div id="jobsList">No jobs yet.</div>
+  <h2>Jobs</h2>
+  <div id="jobs"></div>
 </div>
 
 </div>
@@ -131,104 +101,96 @@ Logout
 
 <script>
 const API = "http://localhost:3000";
+
 const token = localStorage.getItem("token");
+const role = localStorage.getItem("role");
 
-// AUTH GUARD
-if (!token) {
-    window.location.href = "auth.html";
+function getTokenRole(tokenValue) {
+  try {
+    const payload = tokenValue.split(".")[1];
+    const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized + "=".repeat((4 - normalized.length % 4) % 4);
+    return JSON.parse(atob(padded)).role;
+  } catch (err) {
+    return null;
+  }
 }
 
-// SAFE TOKEN DECODE
-function parseToken(token) {
-    try {
-        return JSON.parse(atob(token.split(".")[1]));
-    } catch (e) {
-        return null;
-    }
-}
+const tokenRole = token ? getTokenRole(token) : null;
+const activeRole = tokenRole || role;
 
-const tokenData = parseToken(token);
+if (!token) window.location.href = "auth.html";
+if (activeRole !== "client") window.location.href = "helper.html";
 
-if (!tokenData) {
-    localStorage.removeItem("token");
-    window.location.href = "auth.html";
-}
-
-// SOCKET WITH AUTH
 const socket = io(API, {
-    auth: { token }
+  auth: { token }
 });
 
-const jobsList = document.getElementById("jobsList");
+const jobsDiv = document.getElementById("jobs");
 
-document.getElementById("createBtn").addEventListener("click", () => {
-    const title = document.getElementById("title").value;
-    const description = document.getElementById("description").value;
-    const location = document.getElementById("location").value;
+socket.on("jobs:init", renderAll);
+socket.on("job:new", addJob);
+socket.on("job:update", updateJob);
 
-    socket.emit("job:create", { title, description, location });
+function createJob() {
+  socket.emit("job:create", {
+    title: title.value,
+    description: desc.value,
+    location: location.value
+  });
 
-    document.getElementById("title").value = "";
-    document.getElementById("description").value = "";
-    document.getElementById("location").value = "";
-});
+  title.value = "";
+  desc.value = "";
+  location.value = "";
+}
 
-socket.on("jobs:init", (jobs) => {
-    jobsList.innerHTML = "";
+function renderAll(jobs) {
+  jobsDiv.innerHTML = "";
 
-    document.getElementById("totalJobs").textContent = jobs.length;
-    document.getElementById("openJobs").textContent = jobs.filter(j => j.status === "open").length;
-    document.getElementById("acceptedJobs").textContent = jobs.filter(j => j.status === "accepted").length;
-    document.getElementById("completedJobs").textContent = jobs.filter(j => j.status === "done").length;
+  updateStats(jobs);
 
-    jobs.forEach(renderJob);
-});
+  jobs.forEach(addJob);
+}
 
-socket.on("job:new", renderJob);
+function addJob(job) {
+  const div = document.createElement("div");
+  div.className = "job";
+  div.id = job.id;
 
-socket.on("job:update", (job) => {
-    const el = document.getElementById(job.id);
-    if (!el) return;
+  div.innerHTML = `
+    <h3>${job.title}</h3>
+    <p>${job.description}</p>
+    <small>${job.location}</small>
+    <p>Status: ${job.status}</p>
+  `;
 
+  jobsDiv.appendChild(div);
+}
+
+function updateJob(job) {
+  const el = document.getElementById(job.id);
+  if (el) {
     el.innerHTML = `
-        <h3>${job.title}</h3>
-        <p>${job.description}</p>
-        <small>${job.location}</small>
-        <br>
-        <strong>Status:</strong> ${job.status}
+      <h3>${job.title}</h3>
+      <p>${job.description}</p>
+      <small>${job.location}</small>
+      <p>Status: ${job.status}</p>
     `;
-});
+  }
+}
 
-function renderJob(job) {
-    const div = document.createElement("div");
-    div.className = "job";
-    div.id = job.id;
-
-    div.innerHTML = `
-        <h3>${job.title}</h3>
-        <p>${job.description}</p>
-        <small>${job.location}</small>
-        <br>
-        <strong>Status:</strong> ${job.status}
-    `;
-
-    jobsList.appendChild(div);
+function updateStats(jobs) {
+  total.textContent = jobs.length;
+  open.textContent = jobs.filter(j => j.status === "open").length;
+  accepted.textContent = jobs.filter(j => j.status === "accepted").length;
+  done.textContent = jobs.filter(j => j.status === "done").length;
 }
 
 function logout() {
-    localStorage.removeItem("token");
-    window.location.href = "auth.html";
-}
-
-// show role safely
-if (tokenData?.role) {
-    document.querySelector("h1").innerText += ` (${tokenData.role})`;
-}
-
-// hide create section for helpers
-if (tokenData?.role !== "client") {
-    document.querySelector(".section").style.display = "none";
+  localStorage.clear();
+  window.location.href = "auth.html";
 }
 </script>
+
 </body>
 </html>

@@ -1,139 +1,108 @@
-const express = require("express");
-const http = require("http");
-const cors = require("cors");
-const { Server } = require("socket.io");
-const jwt = require("jsonwebtoken");
-require("dotenv").config();
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>InstantFix</title>
+<style>
+:root{
+  --bg:#eef2f7;
+  --card:#ffffff;
+  --text:#16202a;
+  --muted:#5f6b7a;
+  --accent:#111827;
+  --accent2:#2563eb;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;
+  min-height:100vh;
+  font-family:Arial, Helvetica, sans-serif;
+  color:var(--text);
+  background: radial-gradient(circle at top left, #ffffff 0, #eef2f7 35%, #dbe7ff 100%);
+  display:grid;
+  place-items:center;
+  padding:24px;
+}
+.card{
+  width:min(720px, 100%);
+  background:var(--card);
+  border:1px solid rgba(17,24,39,.08);
+  border-radius:24px;
+  box-shadow:0 30px 80px rgba(17,24,39,.12);
+  padding:40px;
+}
+h1{
+  margin:0 0 12px;
+  font-size:clamp(2rem, 5vw, 3.5rem);
+}
+p{
+  margin:0;
+  color:var(--muted);
+  line-height:1.6;
+}
+.actions{
+  display:flex;
+  gap:12px;
+  flex-wrap:wrap;
+  margin-top:28px;
+}
+a{
+  text-decoration:none;
+  border-radius:999px;
+  padding:14px 22px;
+  font-weight:700;
+}
+.primary{
+  background:var(--accent);
+  color:#fff;
+}
+.secondary{
+  background:#e5eefc;
+  color:var(--accent2);
+}
+.grid{
+  margin-top:28px;
+  display:grid;
+  grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));
+  gap:14px;
+}
+.item{
+  background:#f8fafc;
+  border:1px solid rgba(17,24,39,.08);
+  border-radius:18px;
+  padding:18px;
+}
+.item strong{
+  display:block;
+  margin-bottom:8px;
+}
+</style>
+</head>
+<body>
+  <main class="card">
+    <h1>InstantFix</h1>
+    <p>A simple jobs board for clients and helpers. Post a job, accept work, and track status in one place.</p>
 
-const db = require("./db");
-const { router: authRouter } = require("./auth");
+    <div class="actions">
+      <a class="primary" href="auth.html">Sign in</a>
+      <a class="secondary" href="auth.html">Create account</a>
+    </div>
 
-const app = express();
-app.use(cors());
-app.use(express.json());
-
-const server = http.createServer(app);
-
-const io = new Server(server, {
-  cors: { origin: "*" }
-});
-
-const JWT_SECRET = process.env.JWT_SECRET || "dev_secret_change_me";
-
-/* ---------------- AUTH ROUTES ---------------- */
-app.use("/auth", authRouter);
-
-app.get("/", (req, res) => {
-  res.send("InstantFix backend running");
-});
-
-/* ---------------- SOCKET AUTH ---------------- */
-io.use((socket, next) => {
-  try {
-    const token = socket.handshake.auth?.token;
-
-    if (!token) return next(new Error("No token provided"));
-
-    const decoded = jwt.verify(token, JWT_SECRET);
-    socket.user = decoded;
-
-    next();
-  } catch (err) {
-    next(new Error("Invalid token"));
-  }
-});
-
-/* ---------------- SOCKET CONNECTION ---------------- */
-io.on("connection", (socket) => {
-  console.log("user connected:", socket.user?.email);
-
-  /* SEND ALL JOBS FROM DB */
-  db.all("SELECT * FROM jobs", [], (err, rows) => {
-    socket.emit("jobs:init", rows || []);
-  });
-
-  /* ---------------- CREATE JOB ---------------- */
-  socket.on("job:create", (data) => {
-    if (socket.user.role !== "client") return;
-
-    const job = {
-      id: Date.now().toString(),
-      title: data.title,
-      description: data.description,
-      location: data.location,
-      status: "open",
-      clientId: socket.user.id,
-      helperId: null
-    };
-
-    db.run(
-      `INSERT INTO jobs (id, title, description, location, status, clientId, helperId)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [
-        job.id,
-        job.title,
-        job.description,
-        job.location,
-        job.status,
-        job.clientId,
-        job.helperId
-      ]
-    );
-
-    io.emit("job:new", job);
-  });
-
-  /* ---------------- ACCEPT JOB ---------------- */
-  socket.on("job:accept", ({ jobId }) => {
-    if (socket.user.role !== "helper") return;
-
-    db.get("SELECT * FROM jobs WHERE id = ?", [jobId], (err, job) => {
-      if (!job || job.status !== "open") return;
-
-      db.run(
-        "UPDATE jobs SET status = ?, helperId = ? WHERE id = ?",
-        ["accepted", socket.user.id, jobId]
-      );
-
-      io.emit("job:update", {
-        ...job,
-        status: "accepted",
-        helperId: socket.user.id
-      });
-    });
-  });
-
-  /* ---------------- COMPLETE JOB ---------------- */
-  socket.on("job:done", ({ jobId }) => {
-    db.get("SELECT * FROM jobs WHERE id = ?", [jobId], (err, job) => {
-      if (!job) return;
-
-      const isHelper = job.helperId === socket.user.id;
-      const isClient = job.clientId === socket.user.id;
-
-      if (!isHelper && !isClient) return;
-
-      db.run(
-        "UPDATE jobs SET status = ? WHERE id = ?",
-        ["done", jobId]
-      );
-
-      io.emit("job:update", {
-        ...job,
-        status: "done"
-      });
-    });
-  });
-
-  /* ---------------- DISCONNECT ---------------- */
-  socket.on("disconnect", () => {
-    console.log("user disconnected:", socket.user?.email || socket.id);
-  });
-});
-
-/* ---------------- START SERVER ---------------- */
-const PORT = process.env.PORT || 3000;
-
-server.listen(PORT, () => {
-  console.log("InstantFix running on port", PORT);
-});
+    <section class="grid">
+      <div class="item">
+        <strong>Clients</strong>
+        Post jobs and watch them move from open to done.
+      </div>
+      <div class="item">
+        <strong>Helpers</strong>
+        See live jobs, accept work, and mark jobs complete.
+      </div>
+      <div class="item">
+        <strong>Admins</strong>
+        Manage users and jobs from the admin dashboard.
+      </div>
+    </section>
+  </main>
+</body>
+</html>

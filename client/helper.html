@@ -1,28 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Helper Dashboard</title>
+
+<style>
+body{
+  font-family: Arial;
+  background:#f4f4f4;
+  padding:20px;
+}
+
+.container{
+  max-width:900px;
+  margin:auto;
+}
+
+.job{
+  background:white;
+  padding:15px;
+  margin-top:10px;
+  border-radius:10px;
+  border:1px solid #ddd;
+}
+
+button{
+  width:100%;
+  padding:10px;
+  margin-top:8px;
+  cursor:pointer;
+}
+</style>
+</head>
+
+<body>
+
+<div class="container">
+  <h1>Helper Dashboard</h1>
+  <div id="jobs"></div>
+</div>
+
 <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
 
 <script>
-const socket = io("http://localhost:3000");
+const socket = io("http://localhost:3000", {
+  auth: {
+    token: localStorage.getItem("token")
+  }
+});
 
-// identify as helper
-socket.emit("auth:identify", { role: "helper" });
+const jobsDiv = document.getElementById("jobs");
 
-socket.on("jobs:init", renderJobs);
-socket.on("job:new", addJob);
-socket.on("job:update", updateJob);
+/* DEBUG */
+socket.on("connect", () => {
+  console.log("CONNECTED:", socket.id);
+});
 
-function acceptJob(id) {
-  socket.emit("job:accept", { jobId: id });
+socket.on("connect_error", (err) => {
+  console.log("CONNECT ERROR:", err.message);
+});
+
+/* INIT JOBS */
+socket.on("jobs:init", (jobs) => {
+  console.log("JOBS RECEIVED:", jobs);
+  jobsDiv.innerHTML = "";
+  jobs.forEach(renderJob);
+});
+
+/* NEW JOB */
+socket.on("job:new", (job) => {
+  renderJob(job);
+});
+
+/* UPDATE JOB */
+socket.on("job:update", (job) => {
+  const el = document.getElementById(job.id);
+  if (el) {
+    el.innerHTML = buildJob(job);
+  }
+});
+
+function renderJob(job){
+  const div = document.createElement("div");
+  div.className = "job";
+  div.id = job.id;
+  div.innerHTML = buildJob(job);
+  jobsDiv.appendChild(div);
 }
 
-function renderJobs(jobs) {
-  console.log("jobs", jobs);
+function buildJob(job){
+  return `
+    <h3>${job.title}</h3>
+    <p>${job.description}</p>
+    <small>${job.location}</small>
+    <br>
+    <b>Status:</b> ${job.status}
+    ${job.status === "open" ? `<button onclick="acceptJob('${job.id}')">Accept</button>` : ""}
+    ${job.status === "accepted" ? `<button onclick="doneJob('${job.id}')">Mark Done</button>` : ""}
+  `;
 }
 
-function addJob(job) {
-  console.log("new job", job);
+function acceptJob(jobId){
+  socket.emit("job:accept", { jobId });
 }
 
-function updateJob(job) {
-  console.log("updated job", job);
+function doneJob(jobId){
+  socket.emit("job:done", { jobId });
 }
 </script>
+
+</body>
+</html>
