@@ -13,14 +13,13 @@ app.use(cors());
 app.use(express.json());
 
 const server = http.createServer(app);
+const PLATFORM_FEE = 0.15; // 15%
 
 const io = new Server(server, {
   cors: { origin: "*" }
 });
 
-/* =========================
-   FRONTEND
-========================= */
+/* FRONTEND */
 app.use(express.static(path.join(__dirname, "../client")));
 app.use("/auth", authRouter);
 
@@ -28,13 +27,11 @@ app.get("/", (req, res) => {
   res.send("InstantFix backend running");
 });
 
-/* =========================
-   SOCKET AUTH
-========================= */
+/* AUTH */
 io.use((socket, next) => {
   try {
     const token = socket.handshake.auth?.token;
-    if (!token) return next(new Error("No token provided"));
+    if (!token) return next(new Error("No token"));
 
     socket.user = jwt.verify(token, JWT_SECRET);
     next();
@@ -43,32 +40,30 @@ io.use((socket, next) => {
   }
 });
 
-/* =========================
-   ROLE HELPERS
-========================= */
+/* ROLE HELPERS */
 const isClient = (s) => s.user.role === "client";
 const isHelper = (s) => s.user.role === "helper";
 const isAdmin = (s) => s.user.role === "admin";
 
 /* =========================
-   ACTIVITY LOGGER
+   ANALYTICS ENGINE
 ========================= */
-function logActivity(io, db, { userId, role, action, metadata }) {
-  const log = {
-    userId: userId || null,
-    role: role || "system",
-    action,
-    metadata: metadata ? JSON.stringify(metadata) : null,
+function track(io, db, { type, userId, role, value }) {
+  const event = {
+    type,
+    userId,
+    role,
+    value: value ? JSON.stringify(value) : null,
     createdAt: new Date().toISOString()
   };
 
   db.run(
-    `INSERT INTO activity_logs (userId, role, action, metadata, createdAt)
+    `INSERT INTO analytics_events (type, userId, role, value, createdAt)
      VALUES (?, ?, ?, ?, ?)`,
-    [log.userId, log.role, log.action, log.metadata, log.createdAt]
+    [event.type, event.userId, event.role, event.value, event.createdAt]
   );
 
-  io.to("admin").emit("activity:new", log);
+  io.to("admin").emit("analytics:event", event);
 }
 
 /* =========================
@@ -83,6 +78,25 @@ io.on("connection", (socket) => {
   sendJobs(socket);
 
   socket.emit("connected", { user: socket.user });
+
+  track(io, db, {
+    type: "user_connected",
+    userId: socket.user.id,
+    role: socket.user.role,
+    value: {}
+  });
+db.get(
+  "SELECT * FROM wallets WHERE userId = ?",
+  [socket.user.id],
+  (err, wallet) => {
+    if (!wallet) {
+      db.run(
+        "INSERT INTO wallets (userId, balance) VALUES (?, ?)",
+        [socket.user.id, 0]
+      );
+    }
+  }
+);
 
   /* =========================
      CREATE JOB
@@ -108,28 +122,18 @@ io.on("connection", (socket) => {
         id, title, description, location,
         status, clientId, workerId, createdAt, updatedAt
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        job.id,
-        job.title,
-        job.description,
-        job.location,
-        job.status,
-        job.clientId,
-        job.workerId,
-        job.createdAt,
-        job.updatedAt
-      ],
+      Object.values(job),
       (err) => {
         if (err) return console.log(err.message);
 
         io.to("helper").emit("job:new", job);
         io.to(`user:${job.clientId}`).emit("job:new", job);
 
-        logActivity(io, db, {
+        track(io, db, {
+          type: "job_created",
           userId: job.clientId,
           role: "client",
-          action: "job_created",
-          metadata: job
+          value: { jobId: job.id }
         });
       }
     );
@@ -152,15 +156,15 @@ io.on("connection", (socket) => {
           if (err) return;
 
           db.get("SELECT * FROM jobs WHERE id = ?", [jobId], (err, updated) => {
-            if (!err && updated) {
+            if (updated) {
               io.to("helper").emit("job:update", updated);
               io.to(`user:${updated.clientId}`).emit("job:update", updated);
 
-              logActivity(io, db, {
+              track(io, db, {
+                type: "job_accepted",
                 userId: socket.user.id,
                 role: "helper",
-                action: "job_accepted",
-                metadata: { jobId }
+                value: { jobId }
               });
             }
           });
@@ -173,66 +177,165 @@ io.on("connection", (socket) => {
      COMPLETE JOB
   ========================= */
   socket.on("job:done", ({ jobId }) => {
-    if (!isHelper(socket)) return;
+  if (!isHelper(socket)) return;
 
-    db.get("SELECT * FROM jobs WHERE id = ?", [jobId], (err, job) => {
-      if (err || !job || job.workerId !== socket.user.id) return;
+  db.get("SELECT * FROM jobs WHERE id = ?", [jobId], (err, job) => {
+    if (err || !job || job.workerId !== socket.user.id) return;
 
-      db.run(
-        `UPDATE jobs SET status='done', updatedAt=CURRENT_TIMESTAMP
-         WHERE id=?`,
-        [jobId],
-        (err) => {
-          if (err) return;
+    const fakePayment = 100; // base job value (simulate pricing engine)
 
-          db.get("SELECT * FROM jobs WHERE id = ?", [jobId], (err, updated) => {
-            if (!err && updated) {
-              io.to("helper").emit("job:update", updated);
-              io.to(`user:${updated.clientId}`).emit("job:update", updated);
+    const fee = fakePayment * PLATFORM_FEE;
+    const net = fakePayment - fee;
 
-              logActivity(io, db, {
-                userId: socket.user.id,
-                role: "helper",
-                action: "job_completed",
-                metadata: { jobId }
-              });
-            }
-          });
-        }
-      );
-    });
-  });
+    db.run(
+      `UPDATE jobs SET status='done', updatedAt=CURRENT_TIMESTAMP
+       WHERE id=?`,
+      [jobId],
+      (err) => {
+        if (err) return;
 
-  /* =========================
-     ADMIN LOG STREAM
-  ========================= */
-  socket.on("admin:logs:live", () => {
-    if (!isAdmin(socket)) return;
+        /* CREDIT HELPER WALLET */
+        db.run(
+          `UPDATE wallets SET balance = balance + ? WHERE userId = ?`,
+          [net, socket.user.id]
+        );
 
-    db.all(
-      "SELECT * FROM activity_logs ORDER BY id DESC LIMIT 100",
-      [],
-      (err, rows) => {
-        if (!err) socket.emit("activity:init", rows || []);
+        /* LOG TRANSACTION */
+        db.run(
+          `INSERT INTO transactions (userId, type, amount, fee, net, jobId, createdAt)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [
+            socket.user.id,
+            "job_payment",
+            fakePayment,
+            fee,
+            net,
+            jobId,
+            new Date().toISOString()
+          ]
+        );
+
+        db.get("SELECT * FROM jobs WHERE id = ?", [jobId], (err, updated) => {
+          if (!err && updated) {
+            io.to("helper").emit("job:update", updated);
+            io.to(`user:${updated.clientId}`).emit("job:update", updated);
+
+            track(io, db, {
+              type: "job_completed",
+              userId: socket.user.id,
+              role: "helper",
+              value: { jobId, earnings: net }
+            });
+          }
+        });
       }
     );
   });
+});
 
-  socket.on("disconnect", () => {
-    console.log("DISCONNECTED:", socket.user.email);
+  /* =========================
+     ANALYTICS API
+  ========================= */
+  socket.on("analytics:summary", () => {
+    if (!isAdmin(socket)) return;
+
+    const summary = {};
+
+    db.all("SELECT type, COUNT(*) as count FROM analytics_events GROUP BY type", [], (e, rows) => {
+      summary.byType = rows || [];
+
+      db.all("SELECT role, COUNT(*) as count FROM analytics_events GROUP BY role", [], (e2, rows2) => {
+        summary.byRole = rows2 || [];
+
+        db.get("SELECT COUNT(*) as totalJobs FROM jobs", [], (e3, r3) => {
+          summary.totalJobs = r3?.totalJobs || 0;
+
+          db.get("SELECT COUNT(*) as activeJobs FROM jobs WHERE status!='done'", [], (e4, r4) => {
+            summary.activeJobs = r4?.activeJobs || 0;
+
+            socket.emit("analytics:summary", summary);
+          });
+        });
+      });
+    });
+  });
+
+  socket.on("analytics:live", () => {
+    if (!isAdmin(socket)) return;
+
+    db.all(
+      "SELECT * FROM analytics_events ORDER BY id DESC LIMIT 50",
+      [],
+      (err, rows) => {
+        if (!err) socket.emit("analytics:init", rows || []);
+      }
+    );
   });
 });
 
 /* =========================
-   SEND JOBS
+   SEND JOBS (ROLE-AWARE)
 ========================= */
 function sendJobs(socket) {
-  db.all("SELECT * FROM jobs", [], (err, rows) => {
-    if (!err) {
-      socket.emit("jobs:init", rows || []);
-    }
-  });
+  if (socket.user.role === "helper") {
+    return db.all(
+      "SELECT * FROM jobs WHERE status='open' ORDER BY createdAt DESC",
+      [],
+      (err, rows) => socket.emit("jobs:init", rows || [])
+    );
+  }
+
+  if (socket.user.role === "client") {
+    return db.all(
+      "SELECT * FROM jobs WHERE clientId=? ORDER BY createdAt DESC",
+      [socket.user.id],
+      (err, rows) => socket.emit("jobs:init", rows || [])
+    );
+  }
+
+  if (socket.user.role === "admin") {
+    return db.all(
+      "SELECT * FROM jobs ORDER BY createdAt DESC",
+      [],
+      (err, rows) => socket.emit("jobs:init", rows || [])
+    );
+  }
 }
+
+socket.on("wallet:get", () => {
+  db.get(
+    "SELECT * FROM wallets WHERE userId = ?",
+    [socket.user.id],
+    (err, wallet) => {
+      socket.emit("wallet:data", wallet || { balance: 0 });
+    }
+  );
+});
+
+socket.on("admin:revenue", () => {
+  if (!isAdmin(socket)) return;
+
+  db.get(
+    `SELECT 
+      SUM(amount) as totalRevenue,
+      SUM(fee) as totalFees,
+      SUM(net) as totalPayouts
+     FROM transactions`,
+    [],
+    (err, summary) => {
+      db.all(
+        `SELECT * FROM transactions ORDER BY id DESC LIMIT 50`,
+        [],
+        (err2, rows) => {
+          socket.emit("admin:revenue:data", {
+            summary,
+            transactions: rows || []
+          });
+        }
+      );
+    }
+  );
+});
 
 /* =========================
    START SERVER

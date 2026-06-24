@@ -6,6 +6,7 @@ const db = new sqlite3.Database(
 );
 
 db.serialize(() => {
+  /* USERS */
   db.run(`
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -15,6 +16,7 @@ db.serialize(() => {
     )
   `);
 
+  /* JOBS */
   db.run(`
     CREATE TABLE IF NOT EXISTS jobs (
       id TEXT PRIMARY KEY,
@@ -29,6 +31,7 @@ db.serialize(() => {
     )
   `);
 
+  /* ACTIVITY LOGS */
   db.run(`
     CREATE TABLE IF NOT EXISTS activity_logs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -39,6 +42,38 @@ db.serialize(() => {
       createdAt TEXT
     )
   `);
+
+  /* ANALYTICS EVENTS */
+  db.run(`
+    CREATE TABLE IF NOT EXISTS analytics_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      type TEXT,
+      userId TEXT,
+      role TEXT,
+      value TEXT,
+      createdAt TEXT
+    )
+  `);
 });
+
+db.run(`
+  CREATE TABLE IF NOT EXISTS wallets (
+    userId TEXT PRIMARY KEY,
+    balance REAL DEFAULT 0
+  )
+`);
+
+db.run(`
+  CREATE TABLE IF NOT EXISTS transactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    userId TEXT,
+    type TEXT,
+    amount REAL,
+    fee REAL,
+    net REAL,
+    jobId TEXT,
+    createdAt TEXT
+  )
+`);
 
 module.exports = db;

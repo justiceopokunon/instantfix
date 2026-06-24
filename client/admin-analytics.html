@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Analytics Dashboard</title>
+<style>
+body { font-family: Arial; background:#f4f4f4; padding:20px; }
+.card { background:white; padding:15px; margin:10px 0; border-radius:8px; }
+.grid { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+</style>
+</head>
+<body>
+
+<h1>SaaS Analytics Dashboard</h1>
+
+<div class="grid">
+  <div class="card">
+    <h3>Total Jobs</h3>
+    <div id="totalJobs">0</div>
+  </div>
+
+  <div class="card">
+    <h3>Active Jobs</h3>
+    <div id="activeJobs">0</div>
+  </div>
+
+  <div class="card">
+    <h3>Event Types</h3>
+    <div id="eventTypes"></div>
+  </div>
+</div>
+
+<h2>Live Events</h2>
+<div id="feed"></div>
+
+<script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
+<script>
+const socket = io("http://localhost:3000", {
+  auth: { token: localStorage.getItem("token") }
+});
+
+socket.emit("analytics:summary");
+socket.emit("analytics:live");
+
+socket.on("analytics:summary", (data) => {
+  document.getElementById("totalJobs").innerText = data.totalJobs;
+  document.getElementById("activeJobs").innerText = data.activeJobs;
+
+  document.getElementById("eventTypes").innerHTML =
+    data.byType.map(e => `<div>${e.type}: ${e.count}</div>`).join("");
+});
+
+socket.on("analytics:init", render);
+socket.on("analytics:event", prepend);
+
+function render(events) {
+  const el = document.getElementById("feed");
+  el.innerHTML = "";
+  events.forEach(prepend);
+}
+
+function prepend(e) {
+  const el = document.getElementById("feed");
+
+  const div = document.createElement("div");
+  div.className = "card";
+  div.innerHTML = `
+    <b>${e.type}</b><br>
+    Role: ${e.role}<br>
+    <small>${e.createdAt}</small>
+  `;
+  el.prepend(div);
+}
+</script>
+
+</body>
+</html>

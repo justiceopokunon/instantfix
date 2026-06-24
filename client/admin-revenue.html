@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Revenue Dashboard</title>
+<style>
+body { font-family: Arial; background:#f4f4f4; padding:20px; }
+.card { background:white; padding:15px; margin:10px 0; border-radius:8px; }
+.grid { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+</style>
+</head>
+<body>
+
+<h1>Revenue Dashboard</h1>
+
+<div class="grid">
+  <div class="card">
+    <h3>Total Revenue</h3>
+    <div id="rev">0</div>
+  </div>
+
+  <div class="card">
+    <h3>Platform Fees</h3>
+    <div id="fees">0</div>
+  </div>
+
+  <div class="card">
+    <h3>Helper Payouts</h3>
+    <div id="payouts">0</div>
+  </div>
+</div>
+
+<h2>Transactions</h2>
+<div id="tx"></div>
+
+<script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
+<script>
+const socket = io("http://localhost:3000", {
+  auth: { token: localStorage.getItem("token") }
+});
+
+socket.emit("admin:revenue");
+
+socket.on("admin:revenue:data", (data) => {
+  document.getElementById("rev").innerText = data.summary.totalRevenue || 0;
+  document.getElementById("fees").innerText = data.summary.totalFees || 0;
+  document.getElementById("payouts").innerText = data.summary.totalPayouts || 0;
+
+  const el = document.getElementById("tx");
+  el.innerHTML = data.transactions.map(t => `
+    <div class="card">
+      <b>${t.type}</b><br>
+      Amount: ${t.amount}<br>
+      Fee: ${t.fee}<br>
+      Net: ${t.net}<br>
+      <small>${t.createdAt}</small>
+    </div>
+  `).join("");
+});
+</script>
+
+</body>
+</html>
