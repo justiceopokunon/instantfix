@@ -15,50 +15,53 @@ db.serialize(() => {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       email TEXT UNIQUE NOT NULL,
       password TEXT NOT NULL,
-      role TEXT NOT NULL CHECK(role IN ('client','helper','admin')),
-      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+      role TEXT NOT NULL DEFAULT 'client',
+      createdAt TEXT DEFAULT CURRENT_TIMESTAMP
     )
   `);
 
   /* =========================
-     JOBS TABLE (HARDENED)
+     JOBS TABLE (PRODUCTION STRUCTURE)
   ========================= */
   db.run(`
     CREATE TABLE IF NOT EXISTS jobs (
       id TEXT PRIMARY KEY,
+
       title TEXT NOT NULL,
       description TEXT NOT NULL,
       location TEXT NOT NULL,
-      status TEXT NOT NULL CHECK(status IN ('open','accepted','done','cancelled')) DEFAULT 'open',
-      clientId TEXT NOT NULL,
-      workerId TEXT,
-      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+
+      status TEXT NOT NULL DEFAULT 'open',
+      CHECK(status IN ('open', 'accepted', 'done', 'cancelled')),
+
+      clientId INTEGER NOT NULL,
+      workerId INTEGER,
+
+      createdAt TEXT DEFAULT CURRENT_TIMESTAMP,
+      updatedAt TEXT DEFAULT CURRENT_TIMESTAMP
     )
   `);
 
   /* =========================
-     SAFE MIGRATION: helperId → workerId
+     JOB ACTIVITY LOG (NEW)
+     Tracks lifecycle changes
   ========================= */
-  db.all("PRAGMA table_info(jobs)", [], (err, columns) => {
-    if (err) return;
+  db.run(`
+    CREATE TABLE IF NOT EXISTS job_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      jobId TEXT NOT NULL,
+      action TEXT NOT NULL,
+      actorId INTEGER,
+      timestamp TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
 
-    const columnNames = columns.map(c => c.name);
-
-    // If old column exists
-    if (columnNames.includes("helperId") && !columnNames.includes("workerId")) {
-
-      db.run(`ALTER TABLE jobs ADD COLUMN workerId TEXT`, () => {
-
-        db.run(`
-          UPDATE jobs
-          SET workerId = helperId
-          WHERE workerId IS NULL AND helperId IS NOT NULL
-        `);
-
-      });
-    }
-  });
+  /* =========================
+     INDEXES (PERFORMANCE)
+  ========================= */
+  db.run(`CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_jobs_client ON jobs(clientId)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_jobs_worker ON jobs(workerId)`);
 
 });
 
