@@ -35,7 +35,7 @@ app.get("/", (req, res) => {
 io.use((socket, next) => {
   try {
     const token = socket.handshake.auth?.token;
-    if (!token) return next(new Error("No token"));
+    if (!token) return next(new Error("No token provided"));
 
     const decoded = jwt.verify(token, JWT_SECRET);
     socket.user = decoded;
@@ -47,11 +47,17 @@ io.use((socket, next) => {
 });
 
 /* =========================
-   ROLE HELPERS
+   ROLE SYSTEM CORE
 ========================= */
-const isClient = (s) => s.user.role === "client";
-const isHelper = (s) => s.user.role === "helper";
-const isAdmin = (s) => s.user.role === "admin";
+const ROLES = {
+  CLIENT: "client",
+  HELPER: "helper",
+  ADMIN: "admin"
+};
+
+function requireRole(socket, roles) {
+  return roles.includes(socket.user.role);
+}
 
 /* =========================
    CONNECTION
@@ -64,11 +70,10 @@ io.on("connection", (socket) => {
   sendJobs(socket);
 
   /* =========================
-     CREATE JOB
+     CREATE JOB (CLIENT ONLY)
   ========================= */
   socket.on("job:create", (data) => {
-    if (!isClient(socket)) return;
-
+    if (!requireRole(socket, [ROLES.CLIENT])) return;
     if (!data?.title || !data?.description || !data?.location) return;
 
     const job = {
@@ -76,14 +81,20 @@ io.on("connection", (socket) => {
       title: data.title,
       description: data.description,
       location: data.location,
+
       status: "open",
       clientId: socket.user.id,
-      workerId: null
+      workerId: null,
+
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
     };
 
     db.run(
-      `INSERT INTO jobs (id, title, description, location, status, clientId, workerId)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO jobs (
+        id, title, description, location,
+        status, clientId, workerId, createdAt, updatedAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         job.id,
         job.title,
@@ -91,20 +102,23 @@ io.on("connection", (socket) => {
         job.location,
         job.status,
         job.clientId,
-        job.workerId
+        job.workerId,
+        job.createdAt,
+        job.updatedAt
       ],
       (err) => {
         if (err) return console.log(err.message);
+
         io.emit("job:new", job);
       }
     );
   });
 
   /* =========================
-     ACCEPT JOB (HARD RULES)
+     ACCEPT JOB (HELPER ONLY)
   ========================= */
   socket.on("job:accept", ({ jobId }) => {
-    if (!isHelper(socket)) return;
+    if (!requireRole(socket, [ROLES.HELPER])) return;
 
     db.get("SELECT * FROM jobs WHERE id = ?", [jobId], (err, job) => {
       if (err || !job) return;
@@ -113,7 +127,11 @@ io.on("connection", (socket) => {
       if (job.workerId) return;
 
       db.run(
-        `UPDATE jobs SET status = 'accepted', workerId = ? WHERE id = ? AND status = 'open'`,
+        `UPDATE jobs
+         SET status = 'accepted',
+             workerId = ?,
+             updatedAt = CURRENT_TIMESTAMP
+         WHERE id = ? AND status = 'open'`,
         [socket.user.id, jobId],
         (err) => {
           if (err) return console.log(err.message);
@@ -127,10 +145,10 @@ io.on("connection", (socket) => {
   });
 
   /* =========================
-     COMPLETE JOB (OWNER ONLY)
+     COMPLETE JOB (HELPER ONLY + OWNER)
   ========================= */
   socket.on("job:done", ({ jobId }) => {
-    if (!isHelper(socket)) return;
+    if (!requireRole(socket, [ROLES.HELPER])) return;
 
     db.get("SELECT * FROM jobs WHERE id = ?", [jobId], (err, job) => {
       if (err || !job) return;
@@ -139,7 +157,10 @@ io.on("connection", (socket) => {
       if (job.workerId !== socket.user.id) return;
 
       db.run(
-        `UPDATE jobs SET status = 'done' WHERE id = ?`,
+        `UPDATE jobs
+         SET status = 'done',
+             updatedAt = CURRENT_TIMESTAMP
+         WHERE id = ?`,
         [jobId],
         (err) => {
           if (err) return console.log(err.message);
@@ -154,9 +175,9 @@ io.on("connection", (socket) => {
 
   /* =========================
      ADMIN USERS
-========================= */
+  ========================= */
   socket.on("admin:users", () => {
-    if (!isAdmin(socket)) return;
+    if (!requireRole(socket, [ROLES.ADMIN])) return;
 
     db.all(
       "SELECT id, email, role FROM users ORDER BY id DESC",
@@ -169,9 +190,9 @@ io.on("connection", (socket) => {
 
   /* =========================
      ADMIN JOBS
-========================= */
+  ========================= */
   socket.on("admin:jobs", () => {
-    if (!isAdmin(socket)) return;
+    if (!requireRole(socket, [ROLES.ADMIN])) return;
 
     db.all("SELECT * FROM jobs ORDER BY id DESC", [], (err, rows) => {
       if (!err) socket.emit("admin:jobs:data", rows || []);
@@ -179,10 +200,10 @@ io.on("connection", (socket) => {
   });
 
   /* =========================
-     ADMIN ROLE UPDATE
-========================= */
+     ADMIN SET ROLE
+  ========================= */
   socket.on("admin:setRole", ({ userId, role }) => {
-    if (!isAdmin(socket)) return;
+    if (!requireRole(socket, [ROLES.ADMIN])) return;
 
     db.run(
       "UPDATE users SET role = ? WHERE id = ?",
@@ -197,9 +218,9 @@ io.on("connection", (socket) => {
 
   /* =========================
      ADMIN DELETE JOB
-========================= */
+  ========================= */
   socket.on("admin:deleteJob", ({ jobId }) => {
-    if (!isAdmin(socket)) return;
+    if (!requireRole(socket, [ROLES.ADMIN])) return;
 
     db.run("DELETE FROM jobs WHERE id = ?", [jobId], (err) => {
       if (err) return;
